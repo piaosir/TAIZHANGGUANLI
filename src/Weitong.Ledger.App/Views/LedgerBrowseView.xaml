@@ -1,0 +1,106 @@
+<UserControl x:Class="Weitong.Ledger.App.Views.LedgerBrowseView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:Weitong.Ledger.App.ViewModels"
+             xmlns:views="clr-namespace:Weitong.Ledger.App.Views"
+             xmlns:dgx="urn:tom-englert.de/DataGridExtensions"
+             FontFamily="{StaticResource F.Ui}" Background="{StaticResource B.Canvas}">
+  <UserControl.Resources>
+    <BooleanToVisibilityConverter x:Key="BoolVis"/>
+    <Style x:Key="NumR" TargetType="TextBlock">
+      <Setter Property="HorizontalAlignment" Value="Right"/><Setter Property="Margin" Value="0,0,12,0"/>
+    </Style>
+    <Style x:Key="NumEdit" TargetType="TextBox">
+      <Setter Property="HorizontalContentAlignment" Value="Right"/>
+    </Style>
+  </UserControl.Resources>
+
+  <Grid Margin="18,14,18,14">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/>
+    </Grid.RowDefinitions>
+
+    <StackPanel Grid.Row="0" Margin="0,0,0,10">
+      <TextBlock x:Name="TitleText" Text="台账明细 · 全组总库" FontSize="18" FontWeight="Bold" Foreground="{StaticResource B.TextPrimary}"/>
+      <TextBlock x:Name="HintText" Text="全组所有合同数据。点每列表头下方的筛选框可像 Excel 一样按列筛选；右上角可全字段搜索；支持导入、导出为标准 Excel。"
+                 Style="{StaticResource SectionHint}" Margin="0,4,0,0" TextWrapping="Wrap"/>
+    </StackPanel>
+
+    <Border Grid.Row="1" Style="{StaticResource Card}" Padding="10,8" Margin="0,0,0,10">
+      <DockPanel LastChildFill="False">
+        <!-- 管理员专用编辑操作 -->
+        <Button x:Name="AddBtn" DockPanel.Dock="Left" Content="＋ 新增行" Click="OnAdd" Style="{StaticResource GridToolBtnPrimary}"
+                Visibility="{Binding IsAdminReview, Converter={StaticResource BoolVis}}"/>
+        <Button x:Name="DelBtn" DockPanel.Dock="Left" Content="删除选中" Click="OnDeleteRows" Style="{StaticResource GridToolBtn}"
+                Visibility="{Binding IsAdminReview, Converter={StaticResource BoolVis}}"/>
+        <Button x:Name="MarkBtn" DockPanel.Dock="Left" Content="标记复核" Click="OnMark" Style="{StaticResource GridToolBtn}"
+                Visibility="{Binding IsAdminReview, Converter={StaticResource BoolVis}}"/>
+        <Separator x:Name="Sep1" DockPanel.Dock="Left" Margin="4,4" Background="{StaticResource B.Hairline}"
+                   Visibility="{Binding IsAdminReview, Converter={StaticResource BoolVis}}"/>
+
+        <Button DockPanel.Dock="Left" Content="导入 Excel" Click="OnImport" Style="{StaticResource GridToolBtn}"/>
+        <Button DockPanel.Dock="Left" Content="导出 Excel" Click="OnExport" Style="{StaticResource GridToolBtn}"/>
+        <TextBox DockPanel.Dock="Right" Width="240" VerticalAlignment="Center" Padding="6,4"
+                 Text="{Binding Filter, UpdateSourceTrigger=PropertyChanged, Delay=200}" ToolTip="全字段搜索"/>
+        <TextBlock DockPanel.Dock="Right" Text="搜索" VerticalAlignment="Center" Foreground="{StaticResource B.TextMuted}" Margin="0,0,8,0"/>
+      </DockPanel>
+    </Border>
+
+    <Border Grid.Row="2" Style="{StaticResource Card}">
+      <DataGrid x:Name="Grid" ItemsSource="{Binding View}" Style="{StaticResource EnterpriseGrid}"
+                IsReadOnly="{Binding IsReadOnlyGrid}" CanUserSortColumns="True" CanUserAddRows="False"
+                SelectionUnit="CellOrRowHeader" SelectionMode="Extended"
+                HorizontalScrollBarVisibility="Auto" RowEditEnding="OnRowEdited"
+                views:GridExcel.EnableExcel="True"
+                dgx:DataGridFilter.IsAutoFilterEnabled="True" Margin="1">
+        <DataGrid.Columns>
+          <DataGridComboBoxColumn Header="合同层级" SelectedItemBinding="{Binding StageName}"
+                                  ItemsSource="{x:Static vm:ContractRow.StageOptions}" Width="80"/>
+          <DataGridTextColumn Header="合同编号" Width="150"
+                              Binding="{Binding ContractNo, ValidatesOnNotifyDataErrors=True, UpdateSourceTrigger=LostFocus}"/>
+          <DataGridTextColumn Header="项目名称" Width="180"
+                              Binding="{Binding ProjectName, ValidatesOnNotifyDataErrors=True, UpdateSourceTrigger=LostFocus}"/>
+          <DataGridTextColumn Header="合同甲方" Width="200" Binding="{Binding PartyA, UpdateSourceTrigger=LostFocus}"/>
+          <DataGridTextColumn Header="销售人员" Width="90" Binding="{Binding SalesPersonName, UpdateSourceTrigger=LostFocus}"/>
+          <DataGridTextColumn Header="市场领域" Width="110" Binding="{Binding MarketField, UpdateSourceTrigger=LostFocus}"/>
+          <DataGridTextColumn Header="产品类型" Width="90" Binding="{Binding ProductType, UpdateSourceTrigger=LostFocus}"/>
+          <DataGridTextColumn Header="项目属性" Width="120" Binding="{Binding ProjectAttribute, UpdateSourceTrigger=LostFocus}"/>
+          <DataGridTextColumn Header="币种" Width="70" Binding="{Binding Currency, UpdateSourceTrigger=LostFocus}"/>
+          <DataGridTextColumn Header="合同金额" Width="120" ElementStyle="{StaticResource NumR}" EditingElementStyle="{StaticResource NumEdit}"
+                              Binding="{Binding ContractAmount, StringFormat=N2, ValidatesOnNotifyDataErrors=True, UpdateSourceTrigger=LostFocus}"/>
+          <DataGridTextColumn Header="本年收入" Width="120" ElementStyle="{StaticResource NumR}" EditingElementStyle="{StaticResource NumEdit}"
+                              Binding="{Binding Revenue, StringFormat=N2, ValidatesOnNotifyDataErrors=True, UpdateSourceTrigger=LostFocus}"/>
+          <DataGridTextColumn Header="本年成本" Width="120" ElementStyle="{StaticResource NumR}" EditingElementStyle="{StaticResource NumEdit}"
+                              Binding="{Binding Cost, StringFormat=N2, ValidatesOnNotifyDataErrors=True, UpdateSourceTrigger=LostFocus}"/>
+          <DataGridTextColumn Header="本年利润" Width="120" IsReadOnly="True" ElementStyle="{StaticResource NumR}"
+                              Binding="{Binding Profit, StringFormat=N2}"/>
+          <DataGridTextColumn Header="1-4月到款" Width="100" ElementStyle="{StaticResource NumR}" EditingElementStyle="{StaticResource NumEdit}"
+                              Binding="{Binding Pay1to4, StringFormat=N2, UpdateSourceTrigger=LostFocus}"/>
+          <DataGridTextColumn Header="5月" Width="90" ElementStyle="{StaticResource NumR}" EditingElementStyle="{StaticResource NumEdit}"
+                              Binding="{Binding Pay5, StringFormat=N2, UpdateSourceTrigger=LostFocus}"/>
+          <DataGridTextColumn Header="6月" Width="90" ElementStyle="{StaticResource NumR}" EditingElementStyle="{StaticResource NumEdit}"
+                              Binding="{Binding Pay6, StringFormat=N2, UpdateSourceTrigger=LostFocus}"/>
+          <DataGridTextColumn Header="7月" Width="90" ElementStyle="{StaticResource NumR}" EditingElementStyle="{StaticResource NumEdit}"
+                              Binding="{Binding Pay7, StringFormat=N2, UpdateSourceTrigger=LostFocus}"/>
+          <DataGridTextColumn Header="8月" Width="90" ElementStyle="{StaticResource NumR}" EditingElementStyle="{StaticResource NumEdit}"
+                              Binding="{Binding Pay8, StringFormat=N2, UpdateSourceTrigger=LostFocus}"/>
+          <DataGridTextColumn Header="9月" Width="90" ElementStyle="{StaticResource NumR}" EditingElementStyle="{StaticResource NumEdit}"
+                              Binding="{Binding Pay9, StringFormat=N2, UpdateSourceTrigger=LostFocus}"/>
+          <DataGridTextColumn Header="10月" Width="90" ElementStyle="{StaticResource NumR}" EditingElementStyle="{StaticResource NumEdit}"
+                              Binding="{Binding Pay10, StringFormat=N2, UpdateSourceTrigger=LostFocus}"/>
+          <DataGridTextColumn Header="11月" Width="90" ElementStyle="{StaticResource NumR}" EditingElementStyle="{StaticResource NumEdit}"
+                              Binding="{Binding Pay11, StringFormat=N2, UpdateSourceTrigger=LostFocus}"/>
+          <DataGridTextColumn Header="12月" Width="90" ElementStyle="{StaticResource NumR}" EditingElementStyle="{StaticResource NumEdit}"
+                              Binding="{Binding Pay12, StringFormat=N2, UpdateSourceTrigger=LostFocus}"/>
+          <DataGridTextColumn Header="预计到款" Width="120" IsReadOnly="True" ElementStyle="{StaticResource NumR}"
+                              Binding="{Binding PaymentTotal, StringFormat=N2}"/>
+          <DataGridTextColumn Header="签约日期" Width="110"
+                              Binding="{Binding SignDateText, ValidatesOnNotifyDataErrors=True, UpdateSourceTrigger=LostFocus}"/>
+          <DataGridTextColumn Header="培育来源" Width="160" Binding="{Binding CultivationSource, UpdateSourceTrigger=LostFocus}"/>
+        </DataGrid.Columns>
+      </DataGrid>
+    </Border>
+
+    <TextBlock Grid.Row="3" x:Name="StatusText" Text="{Binding StatusText}" Margin="2,8,0,0" Foreground="{StaticResource B.TextSecondary}" FontSize="12"/>
+  </Grid>
+</UserControl>

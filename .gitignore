@@ -1,0 +1,61 @@
+# ============================================================
+#  台账管理系统 .gitignore
+#  重点：绝不上传密钥、真实台账数据、加密库、发布产物
+#  注意：.gitignore 的注释必须独占一行，不能写在规则同一行后面
+# ============================================================
+
+# —— 敏感：绝不入库（密钥 / 真实数据 / 加密库）——
+# 腾讯云 SecretId/SecretKey/团队口令（明文凭据）
+cos.json
+**/cos.json
+# 真实合同台账（含姓名/金额，国企数据）
+*.xlsx
+*.xls
+*.xlsm
+**/*.xlsx
+# 本地加密库
+*.db
+*.db-shm
+*.db-wal
+**/*.db
+# 库密钥（DPAPI 保护）
+db.key
+**/db.key
+# 离线数据包（含加密数据）
+*.cvpk
+
+# —— .NET 构建产物 ——
+[Bb]in/
+[Oo]bj/
+build/
+bld/
+[Oo]ut/
+[Ll]og/
+[Ll]ogs/
+
+# —— 发布 / 打包产物（体积大，含 cos.json）——
+发布/
+打包/
+publish/
+*.publish.xml
+
+# —— 运行时/临时 ——
+startup-error.log
+*.user
+*.suo
+.vs/
+.vscode/
+_ReSharper*/
+*.DotSettings.user
+
+# —— NuGet ——
+*.nupkg
+*.snupkg
+packages/
+project.lock.json
+
+# —— 操作系统 ——
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store

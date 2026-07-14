@@ -1,0 +1,31 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Weitong.Ledger.Core\Weitong.Ledger.Core.csproj" />
+    <ProjectReference Include="..\Weitong.Ledger.Data\Weitong.Ledger.Data.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="BouncyCastle.Cryptography" Version="2.6.2" />
+    <PackageReference Include="DataGridExtensions" Version="2.9.1" />
+    <PackageReference Include="LiveChartsCore.SkiaSharpView.WPF" Version="2.1.0-dev-798" />
+    <PackageReference Include="Tencent.QCloud.Cos.Sdk" Version="5.4.51" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <AssemblyName>台账管理系统</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- 精简发布体积：不带调试符号/文档/多余卫星语言 -->
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+    <CopyDebugSymbolFilesFromPackages>false</CopyDebugSymbolFilesFromPackages>
+    <CopyDocumentationFilesFromPackages>false</CopyDocumentationFilesFromPackages>
+    <SatelliteResourceLanguages>zh-Hans;en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+</Project>

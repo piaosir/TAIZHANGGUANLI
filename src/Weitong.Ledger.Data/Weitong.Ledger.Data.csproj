@@ -1,0 +1,31 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Weitong.Ledger.Core\Weitong.Ledger.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="BCrypt.Net-Next" Version="4.2.0" />
+    <PackageReference Include="Dapper" Version="2.1.79" />
+    <PackageReference Include="Microsoft.Data.Sqlite.Core" Version="9.0.9" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="9.0.9">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite.Core" Version="9.0.9" />
+    <PackageReference Include="NPOI" Version="2.8.0" />
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlcipher" Version="2.1.11" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.9" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!-- NPOI 为 Apache-2.0；此标志仅确认其 OSMF 维护提示，消除构建告警 -->
+    <AcceptNPOIOSMFLicense>true</AcceptNPOIOSMFLicense>
+    <!-- 本应用仅 Windows 运行，DPAPI(ProtectedData) 平台告警可安全忽略 -->
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
+  </PropertyGroup>
+
+</Project>
