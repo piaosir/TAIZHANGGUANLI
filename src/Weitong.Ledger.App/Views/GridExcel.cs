@@ -198,7 +198,10 @@ public static class GridExcel
 
         // 目标列按「显示顺序」铺开（用户可能拖动过列顺序）
         var cols = grid.Columns.OrderBy(c => c.DisplayIndex).ToList();
-        int startRow = grid.CurrentCell.Item is ContractRow ? grid.Items.IndexOf(grid.CurrentCell.Item) : 0;
+        // ⚠️ 结构性追加/定位一律基于「已物化的当前视图快照」，绝不用会随筛选/排序实时变化的
+        //    grid.Items.Count/索引驱动 while 追加——否则筛选下死循环、排序下写错行(评审确认的高危 bug)。
+        var snapshot = grid.Items.OfType<ContractRow>().ToList();
+        int startRow = grid.CurrentCell.Item is ContractRow cur ? snapshot.IndexOf(cur) : 0;
         int startCol = grid.CurrentColumn != null ? cols.IndexOf(grid.CurrentColumn) : 0;
         if (startRow < 0) startRow = 0;
         if (startCol < 0) startCol = 0;
@@ -209,9 +212,11 @@ public static class GridExcel
         for (int i = 0; i < lines.Length; i++)
         {
             int rowIdx = startRow + i;
-            while (rowIdx >= grid.Items.Count) vm.AppendBlank();
-            if (grid.Items[rowIdx] is not ContractRow row) continue;
+            // 超出现有行 → 追加空行并「直接用返回的行对象」，不再按视图索引回查
+            ContractRow row = rowIdx < snapshot.Count ? snapshot[rowIdx] : vm.AppendBlank();
             var vals = lines[i].Split('\t');
+            // 位置对齐：源值 j 逐一落到目标列(显示序)。只读计算列(利润/预计到款)由 SetCellValue 直接丢弃该位值——
+            // 这样「同表复制→粘贴」与「整行台账格式(含利润列)粘贴」都对齐；不改复制侧，避免复制被误剔空。
             for (int j = 0; j < vals.Length; j++)
             {
                 int colIdx = startCol + j;
@@ -307,10 +312,17 @@ public static class GridExcel
         var text = tb.Text?.Trim();
         if (!FormulaEval.IsFormula(text) || !IsNumericColumn(e.Column)) return;
 
-        if (FormulaEval.TryEvaluate(text, out var result))
-            tb.Text = result.ToString(CultureInfo.InvariantCulture);   // 交给数值绑定提交
-        else if (e.Row.Item is ContractRow row)
-            tb.Text = GetCellValue(row, e.Column);                     // 非法公式：还原原值，不污染绑定
+        // 算得合法且非负 → 写回数值让绑定提交；否则(语法错/负数)还原原值+提示音，
+        // 不把注定被字段校验拒绝的值塞进绑定(否则单元格会卡在编辑态无法离开)。
+        if (FormulaEval.TryEvaluate(text, out var result) && result >= 0)
+        {
+            tb.Text = result.ToString(CultureInfo.InvariantCulture);
+        }
+        else
+        {
+            if (e.Row.Item is ContractRow row) tb.Text = GetCellValue(row, e.Column);
+            System.Media.SystemSounds.Exclamation.Play();   // 公式无法识别/结果非法：提示未被采纳
+        }
     }
 
     // ————————————————— 列 ↔ 属性 反射读写（含公式）—————————————————

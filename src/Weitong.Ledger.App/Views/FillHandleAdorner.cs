@@ -19,6 +19,7 @@ public sealed class FillHandleAdorner : Adorner
     private const double HandleSize = 7.0;   // 小黑方块边长（设备无关像素）
     private const double HitPad = 4.0;       // 命中判定外扩，方便点中
     private const double HeaderH = 34.0;     // 列头高度（与 EnterpriseGrid 一致）
+    private const int MaxSelForHandle = 2000;// 选区过大(如 Ctrl+A)不显示填充柄，避免每次布局重算卡顿
 
     private readonly DataGrid _grid;
     private ScrollViewer? _scroll;
@@ -31,6 +32,7 @@ public sealed class FillHandleAdorner : Adorner
 
     private bool _dragging;
     private int _toIndex = -1;                // 拖拽当前目标行（Items 索引）
+    private double _dragX;                     // 拖拽期用于命中测试的安全 X（填充列内，避开右侧滚动条）
     private Rect _handleRect = Rect.Empty;    // 最近一次画出的小方块（adorner 坐标）
     private Rect _lastCorner = Rect.Empty;    // 供布局变化去抖
 
@@ -46,7 +48,7 @@ public sealed class FillHandleAdorner : Adorner
 
         _grid.SelectedCellsChanged += OnSelectionChanged;
         _grid.LayoutUpdated += OnLayoutUpdated;
-        _grid.Loaded += (_, __) => HookScroll();
+        _grid.Loaded += OnGridLoaded;   // 具名，便于 Detach 退订（匿名 lambda 无法退订→adorner 泄漏）
         HookScroll();
     }
 
@@ -54,9 +56,12 @@ public sealed class FillHandleAdorner : Adorner
     {
         _grid.SelectedCellsChanged -= OnSelectionChanged;
         _grid.LayoutUpdated -= OnLayoutUpdated;
+        _grid.Loaded -= OnGridLoaded;
         if (_scroll != null) _scroll.ScrollChanged -= OnScroll;
         _scrollHooked = false;
     }
+
+    private void OnGridLoaded(object? s, RoutedEventArgs e) => HookScroll();
 
     private LedgerGridViewModel? Vm => _grid.DataContext as LedgerGridViewModel;
 
@@ -91,8 +96,10 @@ public sealed class FillHandleAdorner : Adorner
             if (range != null) dc.DrawRectangle(null, _rangePen, range.Value);
         }
 
-        var halo = Inflate(_handleRect, 1.5);
-        dc.DrawRectangle(_halo, null, halo);
+        // 先画一层透明命中区(比可见方块大 HitPad)，使 adorner 在该范围内可命中——
+        // Adorner 只在「实际绘制过几何」处才吃鼠标，不画则点不中，HitPad 容差形同虚设。
+        dc.DrawRectangle(Brushes.Transparent, null, Inflate(_handleRect, HitPad));
+        dc.DrawRectangle(_halo, null, Inflate(_handleRect, 1.5));
         dc.DrawRectangle(_fill, _border, _handleRect);
     }
 
@@ -113,6 +120,10 @@ public sealed class FillHandleAdorner : Adorner
         if (col == null) return;
         var (_, bottom, _) = SelectionExtent(col);
         if (bottom < 0) return;
+        // 记住一个「安全 X」：填充列单元格的水平中心，位于内容区、避开右侧竖直滚动条。
+        // 拖拽时命中测试一律用它做 X，只跟随鼠标 Y，杜绝光标右漂到滚动条→命中失败→误判末行。
+        var br = CellRect(_grid.Items[bottom], col);
+        _dragX = br != null ? br.Value.X + br.Value.Width / 2 : Math.Max(2, _handleRect.X - HandleSize);
         _dragging = true;
         _toIndex = bottom;
         CaptureMouse();
@@ -124,7 +135,7 @@ public sealed class FillHandleAdorner : Adorner
         if (!_dragging) return;
         var p = e.GetPosition(_grid);
         AutoScroll(p);
-        int idx = RowIndexAtY(p);
+        int idx = RowIndexAtY(p.Y);
         if (idx >= 0 && idx != _toIndex) { _toIndex = idx; InvalidateVisual(); }
     }
 
@@ -146,11 +157,10 @@ public sealed class FillHandleAdorner : Adorner
         else if (pInGrid.Y < HeaderH + edge) _scroll.ScrollToVerticalOffset(_scroll.VerticalOffset - 1);
     }
 
-    private int RowIndexAtY(Point pInGrid)
+    private int RowIndexAtY(double yInGrid)
     {
-        double x = Math.Clamp(pInGrid.X, 2, Math.Max(2, _grid.ActualWidth - 2));
-        double y = Math.Clamp(pInGrid.Y, 0, Math.Max(0, _grid.ActualHeight - 1));
-        if (_grid.InputHitTest(new Point(x, y)) is DependencyObject d)
+        double y = Math.Clamp(yInGrid, 0, Math.Max(0, _grid.ActualHeight - 1));
+        if (_grid.InputHitTest(new Point(_dragX, y)) is DependencyObject d)
         {
             var row = GridExcel.FindAncestor<DataGridRow>(d);
             if (row != null)
@@ -159,8 +169,9 @@ public sealed class FillHandleAdorner : Adorner
                 if (i >= 0) return i;
             }
         }
-        // 落在数据行之外：上方 → 首行；否则 → 末行
-        return pInGrid.Y <= HeaderH ? 0 : _grid.Items.Count - 1;
+        // 命中失败(如拖到末行下方空白)：保持当前目标不变，绝不回退到末行——
+        // 避免任何一次命中抖动就把填充范围静默扩到全表底部(评审确认的高危误改)。
+        return -1;
     }
 
     // ————————————————— 填充执行 —————————————————
@@ -225,13 +236,20 @@ public sealed class FillHandleAdorner : Adorner
         return null;
     }
 
-    /// <summary>返回填充列上选区的顶/底行索引与「源行」（顶端选中行，其值作为填充值）。</summary>
+    /// <summary>返回填充列上选区的顶/底行索引与「源行」（顶端选中行，其值作为填充值）。单遍扫描，不排序。</summary>
     private (int top, int bottom, ContractRow? src) SelectionExtent(DataGridColumn col)
     {
-        var items = _grid.SelectedCells.Where(c => c.Column == col)
-                        .Select(c => c.Item).OfType<ContractRow>().Distinct()
-                        .OrderBy(r => _grid.Items.IndexOf(r)).ToList();
-        if (items.Count == 0)
+        int top = int.MaxValue, bottom = -1;
+        ContractRow? topRow = null;
+        foreach (var c in _grid.SelectedCells)
+        {
+            if (c.Column != col || c.Item is not ContractRow r) continue;
+            int idx = _grid.Items.IndexOf(r);
+            if (idx < 0) continue;
+            if (idx < top) { top = idx; topRow = r; }
+            if (idx > bottom) bottom = idx;
+        }
+        if (bottom < 0)   // 无多选：退回当前单元格
         {
             if (_grid.CurrentCell.Item is ContractRow cur)
             {
@@ -240,12 +258,13 @@ public sealed class FillHandleAdorner : Adorner
             }
             return (-1, -1, null);
         }
-        return (_grid.Items.IndexOf(items[0]), _grid.Items.IndexOf(items[^1]), items[0]);
+        return (top, bottom, topRow);
     }
 
     private Rect? ComputeHandleCornerRect()
     {
-        if (_grid.IsReadOnly) return null;   // 只读表（非管理员浏览）不显示填充柄
+        if (_grid.IsReadOnly) return null;                          // 只读表（非管理员浏览）不显示填充柄
+        if (_grid.SelectedCells.Count > MaxSelForHandle) return null; // 超大选区(Ctrl+A)：不显示，免每次布局重算卡顿
         var col = FillColumn();
         if (col == null) return null;
         var (_, bottom, src) = SelectionExtent(col);

@@ -100,6 +100,7 @@ public sealed class LedgerGridViewModel : INotifyPropertyChanged
     {
         var r = Wrap(ContractRow.NewBlank(_currentPerson));
         Rows.Add(r);
+        _batch?.Added.Add(r);   // 若处于批次(粘贴)中，登记新行，供撤销时移除
         return r;
     }
 
@@ -250,9 +251,16 @@ public sealed class LedgerGridViewModel : INotifyPropertyChanged
 
     // ————————— 撤销 / 重做（录入用）—————————
     private sealed record CellEdit(ContractRow Row, string Prop, object? Old, object? New);
-    private readonly Stack<List<CellEdit>> _undo = new();
-    private readonly Stack<List<CellEdit>> _redo = new();
-    private List<CellEdit>? _batch;
+    /// <summary>一步可撤销操作：一批单元格值改动 + 本步(粘贴)新建的行。</summary>
+    private sealed class EditBatch
+    {
+        public List<CellEdit> Cells { get; } = new();
+        public List<ContractRow> Added { get; } = new();
+        public bool IsEmpty => Cells.Count == 0 && Added.Count == 0;
+    }
+    private readonly Stack<EditBatch> _undo = new();
+    private readonly Stack<EditBatch> _redo = new();
+    private EditBatch? _batch;
     private bool _applying;
     public bool CanUndo => _undo.Count > 0;
     public bool CanRedo => _redo.Count > 0;
@@ -261,28 +269,92 @@ public sealed class LedgerGridViewModel : INotifyPropertyChanged
     {
         if (_applying) return;
         var edit = new CellEdit(row, prop, oldV, newV);
-        if (_batch != null) _batch.Add(edit);
-        else { _undo.Push(new List<CellEdit> { edit }); _redo.Clear(); RaiseUndo(); }
+        if (_batch != null) _batch.Cells.Add(edit);
+        else { var b = new EditBatch(); b.Cells.Add(edit); _undo.Push(b); _redo.Clear(); RaiseUndo(); }
         Raise(nameof(StatusText));
     }
 
-    public void BeginBatch() => _batch = new List<CellEdit>();
+    public void BeginBatch() => _batch = new EditBatch();
     public void EndBatch()
     {
-        if (_batch is { Count: > 0 }) { _undo.Push(_batch); _redo.Clear(); RaiseUndo(); }
+        if (_batch is { IsEmpty: false }) { _undo.Push(_batch); _redo.Clear(); RaiseUndo(); }
         _batch = null;
     }
 
-    public void Undo() { if (!CanUndo) return; var b = _undo.Pop(); Apply(b, true); _redo.Push(b); RaiseUndo(); Raise(nameof(StatusText)); }
-    public void Redo() { if (!CanRedo) return; var b = _redo.Pop(); Apply(b, false); _undo.Push(b); RaiseUndo(); Raise(nameof(StatusText)); }
+    public void Undo()
+    {
+        if (!CanUndo) return;
+        var b = _undo.Pop();
+        ApplyCells(b, undo: true);
+        var touched = TouchedExisting(b);
+        RemoveAdded(b.Added);       // 撤销粘贴：移除本步新增的行（个人模式并软删库）
+        PersistTouched(touched);    // 把撤销后的值写回库，保持 库=界面 一致
+        _redo.Push(b); RaiseUndo(); Raise(nameof(StatusText));
+    }
 
-    private void Apply(List<CellEdit> batch, bool undo)
+    public void Redo()
+    {
+        if (!CanRedo) return;
+        var b = _redo.Pop();
+        ReAddRows(b.Added);         // 重做粘贴：先把曾新增的行加回
+        ApplyCells(b, undo: false);
+        var touched = TouchedExisting(b);
+        foreach (var r in b.Added) touched.Add(r);
+        PersistTouched(touched);
+        _undo.Push(b); RaiseUndo(); Raise(nameof(StatusText));
+    }
+
+    private void ApplyCells(EditBatch batch, bool undo)
     {
         _applying = true;
-        foreach (var e in undo ? Enumerable.Reverse(batch) : batch)
+        foreach (var e in undo ? Enumerable.Reverse(batch.Cells) : batch.Cells)
             typeof(ContractRow).GetProperty(e.Prop)?.SetValue(e.Row, undo ? e.Old : e.New);
         _applying = false;
     }
+
+    /// <summary>本步触及的既有行（排除本步新增的行）。</summary>
+    private HashSet<ContractRow> TouchedExisting(EditBatch b)
+    {
+        var set = new HashSet<ContractRow>();
+        foreach (var e in b.Cells) if (!b.Added.Contains(e.Row)) set.Add(e.Row);
+        return set;
+    }
+
+    /// <summary>撤销/重做后把值写回库。仅个人录入模式——管理员模式撤销保持纯视觉，避免 SaveRow 误生成提案。
+    /// 一次性 UpsertContracts（单个 DbContext），避免逐行开加密连接跑 KDF 导致大批量撤销卡死。</summary>
+    private void PersistTouched(ICollection<ContractRow> rows)
+    {
+        if (!_personalOnly || rows.Count == 0) return;
+        // 只落真正带改动的行(IsDirty)。不看 IsNew——否则「重做」会把从未填过值的空白追加行(如 tab-only 粘贴行)也插入库，
+        // 造成库比原始粘贴多出一条空合同。
+        var dirty = rows.Where(r => r.IsDirty).Select(r => r.Model).ToList();
+        if (dirty.Count > 0) _store.UpsertContracts(dirty, _currentPerson);
+        Raise(nameof(StatusText));
+    }
+
+    /// <summary>撤销粘贴新增的行(仅个人录入)：批量软删已入库者并重置身份，使「重做」能以全新 ContractUid 干净重插。
+    /// 管理员/浏览模式不在此结构性反转——其新增经审核系统路由(直改本人/生成提案+已上云)，无法在撤销里安全反转，
+    /// 故保持纯视觉(仅回退单元格值)，避免"界面移除了、总库/提案还在且已广播"的错误一致性(评审确认的高危)。</summary>
+    private void RemoveAdded(IList<ContractRow> added)
+    {
+        if (added.Count == 0 || !_personalOnly) return;
+        var ids = added.Where(r => r.Model.Id > 0).Select(r => r.Model.Id).ToList();
+        if (ids.Count > 0) _store.SoftDeleteContracts(ids, _currentPerson);   // 批量软删（单 DbContext）
+        foreach (var r in added)
+        {
+            r.Model.Id = 0;
+            r.Model.ContractUid = "new-" + Guid.NewGuid().ToString("N")[..12];  // 换新键，重做时纯插入
+            if (Rows.Contains(r)) { r.CellChanged -= OnCell; Rows.Remove(r); }
+        }
+    }
+
+    private void ReAddRows(IEnumerable<ContractRow> added)
+    {
+        if (!_personalOnly) return;   // 与 RemoveAdded 对称：管理员模式不做结构性增删撤销/重做
+        foreach (var r in added)
+            if (!Rows.Contains(r)) { r.CellChanged += OnCell; Rows.Add(r); }
+    }
+
     private void RaiseUndo() { Raise(nameof(CanUndo)); Raise(nameof(CanRedo)); }
 
     public int DirtyCount => Rows.Count(r => r.IsDirty || r.IsNew);
