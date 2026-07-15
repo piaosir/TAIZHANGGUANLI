@@ -100,6 +100,7 @@ public partial class MainWindow : Window
         _review = new ReviewService(_store, _person, personCode, _roles);
 
         _entryVm = new LedgerGridViewModel(_store, _person, personalOnly: true);
+        _entryVm.NeedsSync += OnBrowseNeedsSync;   // 个人录入删除/结构变更后即时上云（墓碑随之广播）
         _browseVm = _roles.IsAdmin(_person)
             ? new LedgerGridViewModel(_store, _person, personalOnly: false, _review)   // 管理员：可编辑 + 提案
             : new LedgerGridViewModel(_store, _person, personalOnly: false);            // 销售：只读浏览
@@ -123,7 +124,7 @@ public partial class MainWindow : Window
 
     private SyncPayload BuildPayload()
     {
-        var contracts = _store.GetAllContracts();
+        var contracts = _store.GetAllContractsForSync();   // 含墓碑：删除靠墓碑上云才能传播到其它设备
         return new SyncPayload
         {
             PersonCode = _config.PersonCode ?? MachineId.Short(),
@@ -131,7 +132,7 @@ public partial class MainWindow : Window
             TeamName = _config.TeamName,
             MachineCode = MachineId.Get(),
             ExportedUtc = DateTime.UtcNow,
-            Count = contracts.Count,
+            Count = contracts.Count(c => !c.IsDeleted),     // 展示用条数只算存活记录
             Contracts = contracts,
         };
     }
@@ -164,12 +165,14 @@ public partial class MainWindow : Window
                 Dispatcher.Invoke(() =>
                 {
                     _review.Ingest(reviews, decisions);      // 写库在 UI 线程
+                    _store.ApplyMergedFromCloud(merged, "云端合并"); // 合并结果(含墓碑)回写本地库：删除生效并收敛，下次不再广播旧值
+                    var live = merged.Where(c => !c.IsDeleted).ToList(); // 展示只取存活记录，墓碑不显示
                     if (teamTargets != null) ApplyDownloadedTeamTargets(teamTargets); // 落本地库（按时间裁决）
                     MaybeReuploadTeamTargets(teamTargets);   // 管理员：本地更新则补传，自愈失败的上传
-                    _dashVm.Load(merged, $"全组 · {payloads.Count} 名成员");
+                    _dashVm.Load(live, $"全组 · {payloads.Count} 名成员");
                     ApplyTeamTarget();                       // 套用（云端有则用云端，否则用本地/种子）
-                    _browseVm.LoadFrom(merged);              // 台账明细 = 云端合并的全组总库
-                    StatusBar.Text = $"使用人 {_person} · 全组 {merged.Count} 条";
+                    _browseVm.LoadFrom(live);                // 台账明细 = 云端合并的全组总库
+                    StatusBar.Text = $"使用人 {_person} · 全组 {live.Count} 条";
                     UpdateBadge();
                     _pendingVm.Load();
                 });
@@ -187,6 +190,7 @@ public partial class MainWindow : Window
         if (!_cos.IsConfigured) return;
         var payload = BuildPayload();
         var reviewBundle = _review.BuildOutgoingBundle();
+        bool isAdmin = _review.IsAdmin;
         var cos = _cos;
         _ = Task.Run(() =>
         {
@@ -194,7 +198,7 @@ public partial class MainWindow : Window
             {
                 var client = new CloudSync(cos);
                 client.UploadMine(payload);
-                client.UploadReview(reviewBundle);
+                if (isAdmin) client.UploadReview(reviewBundle);   // 仅管理员上传提案文件（销售端上传空提案无意义）
             }
             catch { /* 静默：下次刷新会重试 */ }
         });
@@ -202,7 +206,7 @@ public partial class MainWindow : Window
 
     private void OnBrowseNeedsSync() { UpdateBadge(); PushMineInBackground(); }
 
-    /// <summary>销售在待确认页作出决策后：上传决策 + 数据、重拉汇总、刷新红点。</summary>
+    /// <summary>销售在通知页点"知道了"后：上传回执 + 数据、重拉汇总、刷新红点。</summary>
     private void OnReviewDecided() { UpdateBadge(); SyncInBackground(); }
 
     private void UpdateBadge()

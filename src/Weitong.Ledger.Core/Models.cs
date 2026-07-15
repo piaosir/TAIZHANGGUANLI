@@ -102,3 +102,35 @@ public sealed class Contract : AuditableEntity
     public double EffectiveWinProbability =>
         WinProbabilityOverride ?? Stages.DefaultWinProbability(Stage);
 }
+
+/// <summary>
+/// 跨设备合并的冲突裁决。全链统一使用「最后修改时间（<see cref="AuditableEntity.UpdatedAt"/>）
+/// 谁新谁赢」，同一时刻取 <see cref="AuditableEntity.RowVersion"/> 大者。删除以「墓碑」参与合并
+/// （<see cref="AuditableEntity.IsDeleted"/>=true 且带删除时刻的 UpdatedAt），因此删除能盖过更早的
+/// 存活副本、且被删后不会再被其它设备的旧副本复活。
+/// </summary>
+public static class MergeArbiter
+{
+    /// <summary><paramref name="a"/> 是否比 <paramref name="b"/>「更新」（按 UpdatedAt，同刻取 RowVersion 大者）。</summary>
+    public static bool IsNewer(Contract a, Contract b)
+    {
+        int t = a.UpdatedAt.CompareTo(b.UpdatedAt);
+        return t > 0 || (t == 0 && a.RowVersion > b.RowVersion);
+    }
+
+    /// <summary>
+    /// 按 <see cref="Contract.ContractUid"/> 合并多份设备快照，逐 UID 取「最新」版本（含墓碑）。
+    /// 返回的集合可能包含 IsDeleted=true 的墓碑——调用方展示时应过滤，落库时应保留（好让删除继续传播、并收敛）。
+    /// </summary>
+    public static List<Contract> MergeByUid(IEnumerable<Contract> all)
+    {
+        var byUid = new Dictionary<string, Contract>(StringComparer.Ordinal);
+        foreach (var c in all)
+        {
+            if (string.IsNullOrEmpty(c.ContractUid)) continue;
+            if (!byUid.TryGetValue(c.ContractUid, out var cur) || IsNewer(c, cur))
+                byUid[c.ContractUid] = c;
+        }
+        return byUid.Values.ToList();
+    }
+}

@@ -4,7 +4,6 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Data;
-using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Media3D;
@@ -15,8 +14,7 @@ namespace Weitong.Ledger.App.Views;
 
 /// <summary>
 /// 给台账 DataGrid 附加「类 Excel」交互的统一行为，供录入表与浏览表共用，避免各写一套。
-/// 能力：右键菜单、键盘（Ctrl+C/X/V、Ctrl+D、Delete 清除、Ctrl+Z/Y）、整块粘贴、
-/// 单元格简单公式（=+-*/，仅数值列）、以及右下角「填充柄」小黑点（<see cref="FillHandleAdorner"/>）。
+/// 能力：右键菜单、键盘（Ctrl+C/X/V、Ctrl+D、Delete 清除、Ctrl+Z/Y）、整块粘贴。
 /// 只读表(<c>IsReadOnly=true</c>)自动只保留「复制」。
 /// 用法：在 XAML 里给 DataGrid 加 <c>views:GridExcel.EnableExcel="True"</c>。
 /// </summary>
@@ -30,11 +28,6 @@ public static class GridExcel
     public static void SetEnableExcel(DependencyObject o, bool v) => o.SetValue(EnableExcelProperty, v);
     public static bool GetEnableExcel(DependencyObject o) => (bool)o.GetValue(EnableExcelProperty);
 
-    // 存放填充柄 adorner 引用，便于去重与清理
-    private static readonly DependencyProperty AdornerProperty =
-        DependencyProperty.RegisterAttached("Adorner", typeof(FillHandleAdorner), typeof(GridExcel),
-            new PropertyMetadata(null));
-
     private static void OnEnableChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
     {
         if (d is not DataGrid grid) return;
@@ -43,23 +36,19 @@ public static class GridExcel
             grid.ClipboardCopyMode = DataGridClipboardCopyMode.ExcludeHeader;   // 复制成 Excel 可识别的纯 TSV
             grid.PreviewKeyDown += OnPreviewKeyDown;
             grid.PreviewMouseRightButtonDown += OnRightButtonDown;
-            grid.CellEditEnding += OnCellEditEnding;
             grid.Loaded += OnLoaded;
-            grid.Unloaded += OnUnloaded;
         }
         else
         {
             grid.PreviewKeyDown -= OnPreviewKeyDown;
             grid.PreviewMouseRightButtonDown -= OnRightButtonDown;
-            grid.CellEditEnding -= OnCellEditEnding;
             grid.Loaded -= OnLoaded;
-            grid.Unloaded -= OnUnloaded;
         }
     }
 
     private static LedgerGridViewModel? Vm(DataGrid g) => g.DataContext as LedgerGridViewModel;
 
-    // ————————————————— 加载：挂右键菜单 + 填充柄 —————————————————
+    // ————————————————— 加载：挂右键菜单 —————————————————
     private static void OnLoaded(object sender, RoutedEventArgs e)
     {
         var grid = (DataGrid)sender;
@@ -67,27 +56,6 @@ public static class GridExcel
         {
             grid.ContextMenu = BuildMenu(grid);
             grid.ContextMenuOpening += OnContextMenuOpening;
-        }
-        if (grid.GetValue(AdornerProperty) is not FillHandleAdorner)
-        {
-            var layer = AdornerLayer.GetAdornerLayer(grid);
-            if (layer != null)
-            {
-                var ad = new FillHandleAdorner(grid);
-                layer.Add(ad);
-                grid.SetValue(AdornerProperty, ad);
-            }
-        }
-    }
-
-    private static void OnUnloaded(object sender, RoutedEventArgs e)
-    {
-        var grid = (DataGrid)sender;
-        if (grid.GetValue(AdornerProperty) is FillHandleAdorner ad)
-        {
-            ad.Detach();
-            AdornerLayer.GetAdornerLayer(grid)?.Remove(ad);
-            grid.ClearValue(AdornerProperty);
         }
     }
 
@@ -304,44 +272,13 @@ public static class GridExcel
         vm.NotifyChanged();
     }
 
-    // ————————————————— 单元格内简单公式（=+-*/，仅数值列）—————————————————
-    private static void OnCellEditEnding(object? sender, DataGridCellEditEndingEventArgs e)
-    {
-        if (e.EditAction != DataGridEditAction.Commit) return;
-        if (e.EditingElement is not TextBox tb) return;
-        var text = tb.Text?.Trim();
-        if (!FormulaEval.IsFormula(text) || !IsNumericColumn(e.Column)) return;
-
-        // 算得合法且非负 → 写回数值让绑定提交；否则(语法错/负数)还原原值+提示音，
-        // 不把注定被字段校验拒绝的值塞进绑定(否则单元格会卡在编辑态无法离开)。
-        if (FormulaEval.TryEvaluate(text, out var result) && result >= 0)
-        {
-            tb.Text = result.ToString(CultureInfo.InvariantCulture);
-        }
-        else
-        {
-            if (e.Row.Item is ContractRow row) tb.Text = GetCellValue(row, e.Column);
-            System.Media.SystemSounds.Exclamation.Play();   // 公式无法识别/结果非法：提示未被采纳
-        }
-    }
-
-    // ————————————————— 列 ↔ 属性 反射读写（含公式）—————————————————
-    private static string? PathOf(DataGridColumn col) => col switch
+    // ————————————————— 列 ↔ 属性 反射读写 —————————————————
+    internal static string? PathOf(DataGridColumn col) => col switch
     {
         DataGridBoundColumn b when b.Binding is Binding bind => bind.Path.Path,
         DataGridComboBoxColumn cb when cb.SelectedItemBinding is Binding bind => bind.Path.Path,
         _ => null,
     };
-
-    private static bool IsNumericColumn(DataGridColumn col)
-    {
-        var path = PathOf(col);
-        if (path == null) return false;
-        var pi = typeof(ContractRow).GetProperty(path);
-        if (pi == null) return false;
-        var t = Nullable.GetUnderlyingType(pi.PropertyType) ?? pi.PropertyType;
-        return t == typeof(decimal) || t == typeof(int) || t == typeof(long) || t == typeof(double);
-    }
 
     internal static string GetCellValue(ContractRow row, DataGridColumn col)
     {
@@ -350,7 +287,7 @@ public static class GridExcel
         return typeof(ContractRow).GetProperty(path)?.GetValue(row)?.ToString() ?? "";
     }
 
-    /// <summary>把字符串写入 row 的对应属性；数值列识别 = 公式。返回是否真的发生了改变（供只保存脏行）。</summary>
+    /// <summary>把字符串写入 row 的对应属性（数值列去千分位/货币符）。返回是否真的发生了改变（供只保存脏行）。</summary>
     internal static bool SetCellValue(ContractRow row, DataGridColumn col, string value)
     {
         if (col.IsReadOnly) return false;
@@ -392,12 +329,10 @@ public static class GridExcel
         catch { return false; }   // 无法转换：保留原值
     }
 
-    /// <summary>解析数值：先看是否 = 公式，否则按普通数字（去千分位/货币符）。</summary>
+    /// <summary>解析数值：普通数字（去千分位/货币符）。</summary>
     private static bool TryNumber(string value, out decimal result)
     {
-        var s = value.Trim();
-        if (FormulaEval.IsFormula(s)) return FormulaEval.TryEvaluate(s, out result);
-        s = s.Replace(",", "").Replace("，", "").Replace("¥", "").Replace("￥", "").Trim();
+        var s = value.Trim().Replace(",", "").Replace("，", "").Replace("¥", "").Replace("￥", "").Trim();
         return decimal.TryParse(s, NumberStyles.Number, CultureInfo.InvariantCulture, out result);
     }
 

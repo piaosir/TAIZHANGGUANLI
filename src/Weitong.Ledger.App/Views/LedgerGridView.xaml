@@ -25,7 +25,7 @@
     <!-- 标题 -->
     <StackPanel Grid.Row="0" Margin="0,0,0,10">
       <TextBlock Text="个人录入 · 我的台账" FontSize="18" FontWeight="Bold" Foreground="{StaticResource B.TextPrimary}"/>
-      <TextBlock Text="只显示你名下的合同。像 Excel 一样录入：整块粘贴(Ctrl+V)、向下填充(Ctrl+D)、下拉选择、利润 U=收入−成本 实时计算、非法值红框。改完自动保存进总库，无需手动保存。金额单位：元。"
+      <TextBlock Text="只显示你名下的合同。像 Excel 一样录入：整块粘贴(Ctrl+V)、向下填充(Ctrl+D)、下拉选择、利润 U=收入−成本 实时计算、非法值红框；点列表头漏斗图标可按列筛选。改完自动保存进总库，无需手动保存。金额单位：元。"
                  Style="{StaticResource SectionHint}" Margin="0,4,0,0" TextWrapping="Wrap"/>
     </StackPanel>
 

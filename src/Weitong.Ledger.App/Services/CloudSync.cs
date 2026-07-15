@@ -78,7 +78,11 @@ public sealed class CloudSync
         return JsonSerializer.Deserialize<SyncPayload>(Unprotect(res.content), JsonOpts);
     }
 
-    /// <summary>拉取全员并合并去重(按 ContractUid)。</summary>
+    /// <summary>
+    /// 拉取全员并按 ContractUid 合并：逐 UID 取<b>最后修改时间最新</b>的版本（<see cref="MergeArbiter"/>），
+    /// 而非"最后拉到的覆盖"。返回的 merged <b>含墓碑</b>（IsDeleted=true）——调用方展示前应过滤、落库时应保留，
+    /// 这样删除才能盖过其它设备的旧存活副本、且不被复活。
+    /// </summary>
     public (List<Contract> merged, List<SyncPayload> payloads) DownloadAll(Action<string>? log = null)
     {
         var payloads = new List<SyncPayload>();
@@ -91,11 +95,8 @@ public sealed class CloudSync
             }
             catch (Exception ex) { log?.Invoke($"拉取 {p.PersonCode} 失败：{ex.Message}"); }
         }
-        var byUid = new Dictionary<string, Contract>();
-        foreach (var pl in payloads)
-            foreach (var c in pl.Contracts)
-                byUid[c.ContractUid] = c;
-        return (byUid.Values.ToList(), payloads);
+        var merged = MergeArbiter.MergeByUid(payloads.SelectMany(pl => pl.Contracts));
+        return (merged, payloads);
     }
 
     // ————————— 审批通道（管理员提案 / 销售决策） —————————

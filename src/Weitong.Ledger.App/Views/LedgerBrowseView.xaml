@@ -3,7 +3,6 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="clr-namespace:Weitong.Ledger.App.ViewModels"
              xmlns:views="clr-namespace:Weitong.Ledger.App.Views"
-             xmlns:dgx="urn:tom-englert.de/DataGridExtensions"
              FontFamily="{StaticResource F.Ui}" Background="{StaticResource B.Canvas}">
   <UserControl.Resources>
     <BooleanToVisibilityConverter x:Key="BoolVis"/>
@@ -22,7 +21,7 @@
 
     <StackPanel Grid.Row="0" Margin="0,0,0,10">
       <TextBlock x:Name="TitleText" Text="台账明细 · 全组总库" FontSize="18" FontWeight="Bold" Foreground="{StaticResource B.TextPrimary}"/>
-      <TextBlock x:Name="HintText" Text="全组所有合同数据。点每列表头下方的筛选框可像 Excel 一样按列筛选；右上角可全字段搜索；支持导入、导出为标准 Excel。"
+      <TextBlock x:Name="HintText" Text="全组所有合同数据。点每列表头的漏斗图标可像 Excel 一样按列筛选（勾选值、搜索、升降序）；右上角可全字段搜索；支持导入、导出为标准 Excel。"
                  Style="{StaticResource SectionHint}" Margin="0,4,0,0" TextWrapping="Wrap"/>
     </StackPanel>
 
@@ -51,8 +50,7 @@
                 IsReadOnly="{Binding IsReadOnlyGrid}" CanUserSortColumns="True" CanUserAddRows="False"
                 SelectionUnit="CellOrRowHeader" SelectionMode="Extended"
                 HorizontalScrollBarVisibility="Auto" RowEditEnding="OnRowEdited"
-                views:GridExcel.EnableExcel="True"
-                dgx:DataGridFilter.IsAutoFilterEnabled="True" Margin="1">
+                views:GridExcel.EnableExcel="True" Margin="1">
         <DataGrid.Columns>
           <DataGridComboBoxColumn Header="合同层级" SelectedItemBinding="{Binding StageName}"
                                   ItemsSource="{x:Static vm:ContractRow.StageOptions}" Width="80"/>
@@ -102,5 +100,18 @@
     </Border>
 
     <TextBlock Grid.Row="3" x:Name="StatusText" Text="{Binding StatusText}" Margin="2,8,0,0" Foreground="{StaticResource B.TextSecondary}" FontSize="12"/>
+
+    <!-- 导入进行中的遮罩：覆盖整块视图，避免重复点击 / 误操作，并给出进度反馈 -->
+    <Border x:Name="BusyOverlay" Grid.RowSpan="4" Margin="-18,-14" Background="#66000000"
+            Visibility="Collapsed" Panel.ZIndex="10">
+      <Border Background="{StaticResource B.Canvas}" BorderBrush="{StaticResource B.Hairline}" BorderThickness="1"
+              CornerRadius="8" Padding="28,22" HorizontalAlignment="Center" VerticalAlignment="Center">
+        <StackPanel Width="220">
+          <TextBlock x:Name="BusyText" Text="正在导入，请稍候…" FontSize="14"
+                     Foreground="{StaticResource B.TextPrimary}" HorizontalAlignment="Center"/>
+          <ProgressBar IsIndeterminate="True" Height="6" Margin="0,14,0,0"/>
+        </StackPanel>
+      </Border>
+    </Border>
   </Grid>
 </UserControl>

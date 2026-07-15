@@ -1,7 +1,7 @@
 <Window x:Class="Weitong.Ledger.App.Views.ReviewDetailDialog"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="内容对照" Height="640" Width="720"
+        Title="内容详情" Height="640" Width="720"
         WindowStartupLocation="CenterOwner"
         FontFamily="{StaticResource F.Ui}" Background="{StaticResource B.Canvas}">
   <Window.Resources>
@@ -60,7 +60,6 @@
       <Button x:Name="ConfirmBtn" Content="{Binding ConfirmText}" Click="OnConfirm" MinWidth="110" Height="34" Margin="0,0,10,0"
               Background="{StaticResource B.Accent}" Foreground="White" FontWeight="SemiBold" BorderThickness="0"
               Visibility="{Binding IsIncoming, Converter={StaticResource BoolVis}}"/>
-      <Button x:Name="RejectBtn" Content="驳回" Click="OnReject" MinWidth="90" Height="34" Margin="0,0,10,0"/>
       <Button Content="关闭" Click="OnClose" MinWidth="90" Height="34"/>
     </StackPanel>
   </Grid>

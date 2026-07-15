@@ -15,15 +15,22 @@
 
   <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="18,16,18,18">
     <StackPanel>
-      <TextBlock Text="待确认" FontSize="18" FontWeight="Bold" Foreground="{StaticResource B.TextPrimary}"/>
+      <TextBlock Text="通知" FontSize="18" FontWeight="Bold" Foreground="{StaticResource B.TextPrimary}"/>
       <TextBlock Style="{StaticResource SectionHint}" Margin="0,4,0,14" TextWrapping="Wrap"
-                 Text="管理员对你名下数据的增删改需要你确认后才生效；标记是复核提醒，确认后消失。逐条『确认执行』或『驳回』。"/>
+                 Text="管理员对你名下数据的增删改会立即生效，这里只做通知，无需你确认。看过后点『知道了』消除提醒；标记是复核提醒，知晓后消失。"/>
 
-      <!-- 待我确认 -->
-      <TextBlock Text="{Binding IncomingHeader}" Style="{StaticResource SectionTitle}" Margin="0,0,0,8"/>
+      <!-- 待我知晓 -->
+      <DockPanel Margin="0,0,0,8">
+        <TextBlock Text="{Binding IncomingHeader}" Style="{StaticResource SectionTitle}" DockPanel.Dock="Left" VerticalAlignment="Center"/>
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right"
+                    Visibility="{Binding HasIncoming, Converter={StaticResource BoolVis}}">
+          <CheckBox x:Name="IncomingAll" Content="全选" VerticalAlignment="Center" Margin="0,0,12,0" Click="OnIncomingSelectAll"/>
+          <Button Content="全部知道了" Click="OnBatchConfirm" Style="{StaticResource GridToolBtnPrimary}"/>
+        </StackPanel>
+      </DockPanel>
 
       <Border Style="{StaticResource Card}" Padding="18,16" Visibility="{Binding NoIncoming, Converter={StaticResource BoolVis}}">
-        <TextBlock Text="暂无待确认事项。管理员对你名下数据发起改动时会出现在这里，左侧菜单也会有红点提示。"
+        <TextBlock Text="暂无通知。管理员对你名下数据发起增删改时会出现在这里，左侧菜单也会有红点提示。"
                    Foreground="{StaticResource B.TextMuted}" FontSize="12.5" TextWrapping="Wrap"/>
       </Border>
 
@@ -33,25 +40,25 @@
             <Border Style="{StaticResource Card}" Padding="14,12" Margin="0,0,0,8">
               <Grid>
                 <Grid.ColumnDefinitions>
-                  <ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/>
+                  <ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
 
-                <Border Grid.Column="0" Style="{StaticResource OpTag}" Margin="0,0,12,0">
+                <CheckBox Grid.Column="0" IsChecked="{Binding IsSelected, Mode=TwoWay}" VerticalAlignment="Center" Margin="0,0,12,0"/>
+
+                <Border Grid.Column="1" Style="{StaticResource OpTag}" Margin="0,0,12,0">
                   <TextBlock Text="{Binding OpText}" Foreground="{StaticResource B.Accent}" FontSize="12" FontWeight="SemiBold"/>
                 </Border>
 
-                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                <StackPanel Grid.Column="2" VerticalAlignment="Center">
                   <TextBlock Text="{Binding Summary}" Foreground="{StaticResource B.TextPrimary}" FontSize="13" TextWrapping="Wrap"/>
                   <TextBlock Margin="0,4,0,0" Foreground="{StaticResource B.TextMuted}" FontSize="11.5">
                     <Run Text="来自 "/><Run Text="{Binding ByName, Mode=OneWay}" FontWeight="SemiBold"/><Run Text=" · "/><Run Text="{Binding CreatedText, Mode=OneWay}"/>
                   </TextBlock>
                 </StackPanel>
 
-                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
-                  <Button Content="查看对照" Click="OnView" Style="{StaticResource GridToolBtn}"/>
+                <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center">
+                  <Button Content="查看详情" Click="OnView" Style="{StaticResource GridToolBtn}"/>
                   <Button Content="{Binding ConfirmText}" Click="OnConfirm" Style="{StaticResource GridToolBtnPrimary}"/>
-                  <Button Content="驳回" Click="OnReject" Style="{StaticResource GridToolBtn}"
-                          Visibility="{Binding CanReject, Converter={StaticResource BoolVis}}"/>
                 </StackPanel>
               </Grid>
             </Border>
@@ -61,9 +68,16 @@
 
       <!-- 我发起的（管理员） -->
       <StackPanel Margin="0,18,0,0" Visibility="{Binding IsAdmin, Converter={StaticResource BoolVis}}">
-        <TextBlock Text="我发起的" Style="{StaticResource SectionTitle}" Margin="0,0,0,8"/>
+        <DockPanel Margin="0,0,0,8">
+          <TextBlock Text="我发起的" Style="{StaticResource SectionTitle}" DockPanel.Dock="Left" VerticalAlignment="Center"/>
+          <StackPanel Orientation="Horizontal" HorizontalAlignment="Right"
+                      Visibility="{Binding HasOutgoing, Converter={StaticResource BoolVis}}">
+            <CheckBox x:Name="OutgoingAll" Content="全选" VerticalAlignment="Center" Margin="0,0,12,0" Click="OnOutgoingSelectAll"/>
+            <Button Content="批量撤回" Click="OnBatchWithdraw" Style="{StaticResource GridToolBtn}"/>
+          </StackPanel>
+        </DockPanel>
         <Border Style="{StaticResource Card}" Padding="18,14" Visibility="{Binding NoOutgoing, Converter={StaticResource BoolVis}}">
-          <TextBlock Text="你在『台账明细』对他人名下数据的改动会记录在这里，并显示对方是否已确认。"
+          <TextBlock Text="你在『台账明细』对他人名下数据的改动会记录在这里，并显示对方是否已知晓。"
                      Foreground="{StaticResource B.TextMuted}" FontSize="12.5" TextWrapping="Wrap"/>
         </Border>
         <ItemsControl ItemsSource="{Binding Outgoing}" Visibility="{Binding HasOutgoing, Converter={StaticResource BoolVis}}">
@@ -72,18 +86,26 @@
               <Border Style="{StaticResource Card}" Padding="14,12" Margin="0,0,0,8">
                 <Grid>
                   <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/>
                   </Grid.ColumnDefinitions>
-                  <Border Grid.Column="0" Style="{StaticResource OpTag}" Margin="0,0,12,0">
+                  <CheckBox Grid.Column="0" IsChecked="{Binding IsSelected, Mode=TwoWay}" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                  <Border Grid.Column="1" Style="{StaticResource OpTag}" Margin="0,0,12,0">
                     <TextBlock Text="{Binding OpText}" Foreground="{StaticResource B.Accent}" FontSize="12" FontWeight="SemiBold"/>
                   </Border>
-                  <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                  <StackPanel Grid.Column="2" VerticalAlignment="Center">
                     <TextBlock Text="{Binding Summary}" Foreground="{StaticResource B.TextPrimary}" FontSize="13" TextWrapping="Wrap"/>
                     <TextBlock Margin="0,4,0,0" Foreground="{StaticResource B.TextMuted}" FontSize="11.5">
                       <Run Text="对「"/><Run Text="{Binding TargetOwnerName, Mode=OneWay}" FontWeight="SemiBold"/><Run Text="」 · "/><Run Text="{Binding StatusText, Mode=OneWay}"/><Run Text=" · "/><Run Text="{Binding CreatedText, Mode=OneWay}"/>
                     </TextBlock>
+                    <!-- 驳回留言：对方驳回时填的理由，回流后在此显示 -->
+                    <Border Margin="0,6,0,0" Background="{StaticResource B.BadSoft}" CornerRadius="3" Padding="8,5"
+                            HorizontalAlignment="Left" Visibility="{Binding HasRejectNote, Converter={StaticResource BoolVis}}">
+                      <TextBlock Foreground="{StaticResource B.Bad}" FontSize="12" TextWrapping="Wrap">
+                        <Run Text="驳回留言：" FontWeight="SemiBold"/><Run Text="{Binding DecideNote, Mode=OneWay}"/>
+                      </TextBlock>
+                    </Border>
                   </StackPanel>
-                  <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                  <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center">
                     <Button Content="查看" Click="OnViewOutgoing" Style="{StaticResource GridToolBtn}"/>
                     <Button Content="撤回" Click="OnWithdraw" Style="{StaticResource GridToolBtn}"
                             Visibility="{Binding CanWithdraw, Converter={StaticResource BoolVis}}"/>

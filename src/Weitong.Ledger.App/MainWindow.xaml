@@ -44,7 +44,7 @@
           <RadioButton Style="{StaticResource NavItem}" Content="个人录入" GroupName="nav" Tag="entry" Checked="OnNav"/>
           <RadioButton Style="{StaticResource NavItem}" Content="我的达成" GroupName="nav" Tag="mine" Checked="OnNav"/>
           <Grid>
-            <RadioButton x:Name="NavPending" Style="{StaticResource NavItem}" Content="待确认" GroupName="nav" Tag="pending" Checked="OnNav"/>
+            <RadioButton x:Name="NavPending" Style="{StaticResource NavItem}" Content="通知" GroupName="nav" Tag="pending" Checked="OnNav"/>
             <Border x:Name="PendingBadge" Background="#C5221F" CornerRadius="9" MinWidth="18" Height="18"
                     HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,16,0" Padding="5,0"
                     IsHitTestVisible="False" Visibility="Collapsed">

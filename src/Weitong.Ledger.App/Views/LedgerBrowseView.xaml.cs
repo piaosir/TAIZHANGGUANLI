@@ -26,7 +26,7 @@ public partial class LedgerBrowseView : UserControl
             if (_hooked.IsAdminReview)
             {
                 TitleText.Text = "台账明细 · 全组总库（管理员可编辑）";
-                HintText.Text = "管理员：可直接在表格中增删改。改你本人名下的记录立即生效；改他人名下的记录会生成提案，交对应销售在『待确认』确认后才执行。选中行可『标记复核』提醒对方。";
+                HintText.Text = "管理员：可直接在表格中增删改，改动立即生效。改他人名下的记录会同时在『通知』里告知对应销售（无需其确认）。选中行可『标记复核』提醒对方。";
             }
         }
     }
@@ -76,7 +76,7 @@ public partial class LedgerBrowseView : UserControl
             Dispatcher.BeginInvoke(new Action(() => Vm.SaveRow(row)), System.Windows.Threading.DispatcherPriority.Background);
     }
 
-    private void OnImport(object sender, RoutedEventArgs e)
+    private async void OnImport(object sender, RoutedEventArgs e)
     {
         var dlg = new Microsoft.Win32.OpenFileDialog
         {
@@ -85,13 +85,28 @@ public partial class LedgerBrowseView : UserControl
             CheckFileExists = true,
         };
         if (dlg.ShowDialog() != true) return;
+
+        string path = dlg.FileName;
+        var vm = Vm;
+        SetBusy(true, "正在导入，请稍候…");
         try
         {
-            var (imported, anomalies) = Vm.ImportExcel(dlg.FileName);
-            MessageBox.Show($"导入成功：{imported} 条已写入总库。\n数据质量提示：{anomalies} 项（见达成总览底部）。",
+            // 解析 + 落库放后台线程，避免卡住 UI 线程（导入卡死的直接原因）；
+            // 拿到结果后回到 UI 线程刷新表格。
+            var outcome = await Task.Run(() => vm.ImportExcelToStore(path));
+            vm.LoadFrom(outcome.Data);
+            MessageBox.Show($"导入成功：{outcome.Imported} 条已写入总库。\n数据质量提示：{outcome.Anomalies} 项（见达成总览底部）。",
                 "导入完成", MessageBoxButton.OK, MessageBoxImage.Information);
         }
         catch (Exception ex) { MessageBox.Show("导入失败：\n" + ex.Message, "错误", MessageBoxButton.OK, MessageBoxImage.Error); }
+        finally { SetBusy(false); }
+    }
+
+    /// <summary>切换"正在导入"遮罩（可视化进度并挡住误操作）。</summary>
+    private void SetBusy(bool on, string? text = null)
+    {
+        if (text != null) BusyText.Text = text;
+        BusyOverlay.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void OnExport(object sender, RoutedEventArgs e) => LedgerGridView.ExportGrid(Vm);

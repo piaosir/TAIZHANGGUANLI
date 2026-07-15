@@ -11,10 +11,15 @@ public sealed record SeedResult(int Added, int Skipped, int TotalInDb);
 /// 台账加密本地库的门面：创建/打开加密库、建表、首次灌库(幂等)、查询。
 /// 每个使用者一份独立加密库(物理隔离 + 天然按销售分区)。
 /// </summary>
-public sealed class LedgerStore
+public sealed class LedgerStore : IDisposable
 {
     private readonly string _dbPath;
     private readonly string _password;
+    private readonly string _connString;
+    // 进程级「保活连接」：整个 App 生命周期常开不关。作用是让 Microsoft.Data.Sqlite 的连接池
+    // 始终保有一个已完成 SQLCipher 密钥派生(KDF)的物理连接——后续每次 CreateContext 都从池中
+    // 复用它，不再重跑 PRAGMA key 的 25.6 万次 PBKDF2 迭代。这正是「启动慢 + 编辑/撤销/翻页卡」的根因。
+    private readonly Microsoft.Data.Sqlite.SqliteConnection _keepAlive;
 
     static LedgerStore() => SQLitePCL.Batteries_V2.Init();
 
@@ -23,10 +28,17 @@ public sealed class LedgerStore
         Directory.CreateDirectory(dataDir);
         _dbPath = Path.Combine(dataDir, "ledger.db");
         _password = DbKeyProvider.GetOrCreate(Path.Combine(dataDir, "db.key"));
-        using var ctx = CreateContext();
-        ctx.Database.EnsureCreated();
-        EnsureAuxTables(ctx);   // 老库补建后加的表（EnsureCreated 不改既有库）
+        _connString = BuildConnectionString();
+        using (var ctx = CreateContext())
+        {
+            ctx.Database.EnsureCreated();
+            EnsureAuxTables(ctx);   // 老库补建后加的表（EnsureCreated 不改既有库）
+        }
+        _keepAlive = new Microsoft.Data.Sqlite.SqliteConnection(_connString);
+        _keepAlive.Open();          // 常开，保证连接池不被清空、KDF 只在此刻跑一次
     }
+
+    public void Dispose() => _keepAlive.Dispose();
 
     /// <summary>
     /// 为<b>已存在</b>的加密库补建后续版本新增的表（EnsureCreated 只在建库时生效，不会为老库加表）。
@@ -57,18 +69,20 @@ CREATE TABLE IF NOT EXISTS ""ReviewItems"" (
 
     public string DbPath => _dbPath;
 
-    public LedgerDbContext CreateContext()
-    {
-        var cs = new SqliteConnectionStringBuilder
+    /// <summary>连接串：启用连接池(默认)，让已派生密钥的连接可复用，配合保活连接避免每次开连接重跑 KDF。</summary>
+    private string BuildConnectionString() =>
+        new SqliteConnectionStringBuilder
         {
             DataSource = _dbPath,
             Mode = SqliteOpenMode.ReadWriteCreate,
             Password = _password,      // Microsoft.Data.Sqlite 在 SQLCipher 下自动执行 PRAGMA key
-            Pooling = false,
+            // 不再设 Pooling=false：保持默认池化，是本次性能修复的关键
         }.ToString();
 
+    public LedgerDbContext CreateContext()
+    {
         var options = new DbContextOptionsBuilder<LedgerDbContext>()
-            .UseSqlite(cs)
+            .UseSqlite(_connString)
             .Options;
         return new LedgerDbContext(options);
     }
@@ -105,6 +119,57 @@ CREATE TABLE IF NOT EXISTS ""ReviewItems"" (
         return ctx.Contracts.Include(c => c.Payments).AsNoTracking().ToList();
     }
 
+    /// <summary>
+    /// 取全部合同（<b>含已软删的墓碑</b>），供云同步广播。删除靠墓碑传播：只有把 IsDeleted=true 的行
+    /// 也上云，其它设备才知道"这条已删"，否则并集会把它复活。
+    /// </summary>
+    public List<Contract> GetAllContractsForSync()
+    {
+        using var ctx = CreateContext();
+        return ctx.Contracts.IgnoreQueryFilters().Include(c => c.Payments).AsNoTracking().ToList();
+    }
+
+    /// <summary>
+    /// 把云端合并后的<b>权威集合（含墓碑）</b>落回本地库，让删除真正生效、并使本地库与云端收敛。
+    /// 逐条按 <see cref="MergeArbiter.IsNewer"/> 裁决：仅当云端版本比本地<b>更新</b>才覆盖，
+    /// 从而不会用旧云值回滚本机刚改、尚未上传成功的新编辑；云端为墓碑则本地也随之软删。
+    /// 返回实际写入/更新的条数。
+    /// </summary>
+    public int ApplyMergedFromCloud(IEnumerable<Contract> rows, string by)
+    {
+        using var ctx = CreateContext();
+        // 预载全部既有行(含墓碑)到内存，避免逐条查库的 N 次往返。
+        var existing = ctx.Contracts.IgnoreQueryFilters().Include(c => c.Payments)
+                          .ToDictionary(c => c.ContractUid, StringComparer.Ordinal);
+        int n = 0;
+        foreach (var m in rows)
+        {
+            if (string.IsNullOrEmpty(m.ContractUid)) continue;
+            if (!existing.TryGetValue(m.ContractUid, out var e))
+            {
+                // 本地没有：直接落库（墓碑也落，保证本机继续广播删除、并停止显示）
+                m.Id = 0;
+                foreach (var p in m.Payments) { p.Id = 0; p.ContractId = 0; }
+                ctx.Contracts.Add(m);
+                existing[m.ContractUid] = m;
+                n++;
+            }
+            else
+            {
+                if (!MergeArbiter.IsNewer(m, e)) continue;   // 本地不更旧 → 保留本地（不回滚未上传的新编辑）
+                long id = e.Id; m.Id = id;
+                ctx.Entry(e).CurrentValues.SetValues(m);     // 复制标量（含 IsDeleted / UpdatedAt / RowVersion）
+                // 月度到款整表替换（SetValues 不合并导航集合）
+                ctx.MonthlyPayments.RemoveRange(e.Payments);
+                foreach (var p in m.Payments)
+                    ctx.MonthlyPayments.Add(new MonthlyPayment { ContractId = id, Kind = p.Kind, PeriodMonth = p.PeriodMonth, IsCumulative = p.IsCumulative, AmountCents = p.AmountCents });
+                n++;
+            }
+        }
+        ctx.SaveChanges();
+        return n;
+    }
+
     /// <summary>按销售人员过滤（个人页/权限分区用）。</summary>
     public List<Contract> GetContractsFor(string salesPersonName)
     {
@@ -114,29 +179,49 @@ CREATE TABLE IF NOT EXISTS ""ReviewItems"" (
             .AsNoTracking().ToList();
     }
 
-    /// <summary>保存录入：按 Id/ContractUid upsert 标量字段 + 整表替换月度到款，返回写入条数。</summary>
+    /// <summary>保存录入：按 Id/ContractUid upsert 标量字段 + 整表替换月度到款，返回写入条数。
+    /// 批量（导入）时先一次性预载已存在记录，再在内存里匹配，避免逐行查库带来的 O(N) 往返与界面卡顿。</summary>
     public int UpsertContracts(IEnumerable<Contract> rows, string by)
     {
+        var list = rows as IReadOnlyList<Contract> ?? rows.ToList();
+        if (list.Count == 0) return 0;
+
         using var ctx = CreateContext();
+        var now = DateTime.UtcNow;
+
+        // 一次性预载：按 Id、按 ContractUid 各批量查一遍（含月度到款）。后续在内存字典里匹配，
+        // 取代原来的"逐行 FirstOrDefault"——那是导入卡死的主因（N 行 = N 次加密库往返 + 变更跟踪随行数膨胀）。
+        var ids = list.Where(m => m.Id > 0).Select(m => m.Id).Distinct().ToList();
+        var uids = list.Where(m => m.Id <= 0 && !string.IsNullOrEmpty(m.ContractUid))
+                       .Select(m => m.ContractUid).Distinct().ToList();
+
+        var byId = ids.Count == 0
+            ? new Dictionary<long, Contract>()
+            : ctx.Contracts.Include(c => c.Payments).Where(c => ids.Contains(c.Id)).ToDictionary(c => c.Id);
+        var byUid = uids.Count == 0
+            ? new Dictionary<string, Contract>()
+            : ctx.Contracts.Include(c => c.Payments).Where(c => uids.Contains(c.ContractUid)).ToDictionary(c => c.ContractUid);
+
         int n = 0;
-        foreach (var m in rows)
+        foreach (var m in list)
         {
-            Contract? e = m.Id > 0
-                ? ctx.Contracts.Include(c => c.Payments).FirstOrDefault(c => c.Id == m.Id)
-                : ctx.Contracts.Include(c => c.Payments).FirstOrDefault(c => c.ContractUid == m.ContractUid);
+            Contract? e = null;
+            if (m.Id > 0) byId.TryGetValue(m.Id, out e);
+            else if (!string.IsNullOrEmpty(m.ContractUid)) byUid.TryGetValue(m.ContractUid, out e);
 
             if (e == null)
             {
                 m.Id = 0;
-                m.UpdatedBy = by; m.UpdatedAt = DateTime.UtcNow;
+                m.UpdatedBy = by; m.UpdatedAt = now;
                 foreach (var p in m.Payments) { p.Id = 0; p.ContractId = 0; }
                 ctx.Contracts.Add(m);
+                if (!string.IsNullOrEmpty(m.ContractUid)) byUid[m.ContractUid] = m; // 防同批次重复键二次插入触发唯一约束
             }
             else
             {
                 long id = e.Id; m.Id = id;
                 ctx.Entry(e).CurrentValues.SetValues(m); // 复制标量字段
-                e.UpdatedBy = by; e.UpdatedAt = DateTime.UtcNow; e.RowVersion++;
+                e.UpdatedBy = by; e.UpdatedAt = now; e.RowVersion++;
                 // 月度到款整表替换（EF 的 SetValues 不合并导航集合，必须手动处理，否则月度编辑丢失）
                 ctx.MonthlyPayments.RemoveRange(e.Payments);
                 foreach (var p in m.Payments)
@@ -322,11 +407,12 @@ CREATE TABLE IF NOT EXISTS ""ReviewItems"" (
         return q.OrderByDescending(x => x.CreatedUtc).ToList();
     }
 
-    /// <summary>我发起的审批项（管理员查看自己提案的进度）。</summary>
+    /// <summary>我发起的审批项（管理员查看自己提案的进度）。已撤回的不在列表展示——发起方撤回后即视作删除；
+    /// 但记录仍保留在库并继续经 <see cref="GetOutgoingForUpload"/> 上云，确保对方那端的待办被移除。</summary>
     public List<ReviewItem> GetOutgoingReviews(string myName, bool includeClosed = true)
     {
         using var ctx = CreateContext();
-        var q = ctx.ReviewItems.Where(x => x.ByName == myName);
+        var q = ctx.ReviewItems.Where(x => x.ByName == myName && x.Status != ReviewStatus.Withdrawn);
         if (!includeClosed) q = q.Where(x => x.Status == ReviewStatus.Pending);
         return q.OrderByDescending(x => x.CreatedUtc).ToList();
     }
