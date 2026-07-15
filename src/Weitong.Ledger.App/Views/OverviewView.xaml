@@ -48,33 +48,6 @@
         </ItemsControl.ItemTemplate>
       </ItemsControl>
 
-      <!-- 目标达成明细矩阵 -->
-      <Border Style="{StaticResource Card}" Margin="0,14,0,0">
-        <StackPanel>
-          <StackPanel Margin="16,13,16,10">
-            <TextBlock Text="目标达成明细（按销售）" Style="{StaticResource SectionTitle}"/>
-            <TextBlock Text="金额单位：万元 · 收入/利润为已签约口径 · 加权收入为预测口径 · 占比=已签约收入占全组"
-                       Style="{StaticResource SectionHint}" Margin="0,3,0,0"/>
-          </StackPanel>
-          <DataGrid ItemsSource="{Binding Achievements}" Style="{StaticResource EnterpriseGrid}" Margin="1,0,1,1">
-            <DataGrid.Resources>
-              <Style x:Key="Num" TargetType="TextBlock">
-                <Setter Property="HorizontalAlignment" Value="Right"/><Setter Property="Margin" Value="0,0,14,0"/>
-              </Style>
-            </DataGrid.Resources>
-            <DataGrid.Columns>
-              <DataGridTextColumn Header="销售人员" Binding="{Binding Name}" Width="1.4*"/>
-              <DataGridTextColumn Header="合同数" Binding="{Binding Count}" Width="*" ElementStyle="{StaticResource Num}"/>
-              <DataGridTextColumn Header="已签约收入" Binding="{Binding SignedRevenue, StringFormat=N0}" Width="1.2*" ElementStyle="{StaticResource Num}"/>
-              <DataGridTextColumn Header="已签约利润" Binding="{Binding SignedProfit, StringFormat=N0}" Width="1.2*" ElementStyle="{StaticResource Num}"/>
-              <DataGridTextColumn Header="加权收入(预测)" Binding="{Binding Weighted, StringFormat=N0}" Width="1.3*" ElementStyle="{StaticResource Num}"/>
-              <DataGridTextColumn Header="本年预计到款" Binding="{Binding Payment, StringFormat=N0}" Width="1.3*" ElementStyle="{StaticResource Num}"/>
-              <DataGridTextColumn Header="占全组收入" Binding="{Binding SharePct, StringFormat={}{0:N1}%}" Width="*" ElementStyle="{StaticResource Num}"/>
-            </DataGrid.Columns>
-          </DataGrid>
-        </StackPanel>
-      </Border>
-
       <!-- 图表：排行 + 层级 -->
       <Grid Margin="0,14,0,0">
         <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
@@ -116,6 +89,34 @@
           </StackPanel>
         </Border>
       </Grid>
+
+      <!-- 目标达成明细矩阵（放在最后） -->
+      <Border Style="{StaticResource Card}" Margin="0,14,0,0">
+        <StackPanel>
+          <StackPanel Margin="16,13,16,10">
+            <TextBlock Text="目标达成明细（按销售）" Style="{StaticResource SectionTitle}"/>
+            <TextBlock Text="金额单位：万元 · 收入/利润为已签约口径 · 加权收入为预测口径 · 占比=已签约收入占全组"
+                       Style="{StaticResource SectionHint}" Margin="0,3,0,0"/>
+          </StackPanel>
+          <DataGrid ItemsSource="{Binding Achievements}" Style="{StaticResource EnterpriseGrid}"
+                    ColumnHeaderStyle="{StaticResource GridColHeaderNoFilter}" Margin="1,0,1,1">
+            <DataGrid.Resources>
+              <Style x:Key="Num" TargetType="TextBlock">
+                <Setter Property="HorizontalAlignment" Value="Right"/><Setter Property="Margin" Value="0,0,14,0"/>
+              </Style>
+            </DataGrid.Resources>
+            <DataGrid.Columns>
+              <DataGridTextColumn Header="销售人员" Binding="{Binding Name}" Width="1.4*"/>
+              <DataGridTextColumn Header="合同数" Binding="{Binding Count}" Width="*" ElementStyle="{StaticResource Num}"/>
+              <DataGridTextColumn Header="已签约收入" Binding="{Binding SignedRevenue, StringFormat=N0}" Width="1.2*" ElementStyle="{StaticResource Num}"/>
+              <DataGridTextColumn Header="已签约利润" Binding="{Binding SignedProfit, StringFormat=N0}" Width="1.2*" ElementStyle="{StaticResource Num}"/>
+              <DataGridTextColumn Header="加权收入(预测)" Binding="{Binding Weighted, StringFormat=N0}" Width="1.3*" ElementStyle="{StaticResource Num}"/>
+              <DataGridTextColumn Header="本年预计到款" Binding="{Binding Payment, StringFormat=N0}" Width="1.3*" ElementStyle="{StaticResource Num}"/>
+              <DataGridTextColumn Header="占全组收入" Binding="{Binding SharePct, StringFormat={}{0:N1}%}" Width="*" ElementStyle="{StaticResource Num}"/>
+            </DataGrid.Columns>
+          </DataGrid>
+        </StackPanel>
+      </Border>
     </StackPanel>
   </ScrollViewer>
 </UserControl>

@@ -291,6 +291,34 @@
     </Setter>
   </Style>
 
+  <!-- 无筛选列头：用于「达成总览」等只读汇总表——这些表不接 LedgerGridViewModel，漏斗筛选不生效，故去掉按钮 -->
+  <Style x:Key="GridColHeaderNoFilter" TargetType="{x:Type dgp:DataGridColumnHeader}" BasedOn="{StaticResource GridColHeader}">
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="{x:Type dgp:DataGridColumnHeader}">
+          <Grid>
+            <theme:DataGridHeaderBorder SortDirection="{TemplateBinding SortDirection}"
+                                        IsHovered="{TemplateBinding IsMouseOver}"
+                                        IsPressed="{TemplateBinding IsPressed}"
+                                        IsClickable="{TemplateBinding CanUserSort}"
+                                        Background="{TemplateBinding Background}"
+                                        BorderBrush="{TemplateBinding BorderBrush}"
+                                        BorderThickness="{TemplateBinding BorderThickness}"
+                                        Padding="{TemplateBinding Padding}"
+                                        SeparatorBrush="{TemplateBinding SeparatorBrush}"
+                                        SeparatorVisibility="{TemplateBinding SeparatorVisibility}">
+              <ContentPresenter VerticalAlignment="Center"
+                                HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}"/>
+            </theme:DataGridHeaderBorder>
+            <Thumb x:Name="PART_LeftHeaderGripper" HorizontalAlignment="Left" Style="{StaticResource ColumnHeaderGripperStyle}"/>
+            <Thumb x:Name="PART_RightHeaderGripper" HorizontalAlignment="Right" Style="{StaticResource ColumnHeaderGripperStyle}"/>
+          </Grid>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
   <Style x:Key="EnterpriseGrid" TargetType="DataGrid">
     <Setter Property="FontFamily" Value="{StaticResource F.Ui}"/>
     <Setter Property="FontSize" Value="12.5"/>

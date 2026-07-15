@@ -333,6 +333,8 @@ public sealed class DashboardViewModel : INotifyPropertyChanged
         Labels = labels,
         LabelsPaint = new SolidColorPaint(AxisText),
         TextSize = 12, SeparatorsPaint = null, TicksPaint = null,
+        // 强制每个类目都出一个标签，否则类目多时 LiveCharts 会隔项跳过标签，名字与柱子看着就错位了
+        MinStep = 1, ForceStepToMin = true,
     };
 
     private static Axis ValueAxis() => new()
