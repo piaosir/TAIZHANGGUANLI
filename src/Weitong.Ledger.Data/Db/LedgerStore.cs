@@ -60,11 +60,42 @@ CREATE TABLE IF NOT EXISTS ""ReviewItems"" (
     ""DecidedUtc"" TEXT NULL,
     ""DecideNote"" TEXT NULL,
     ""Summary"" TEXT NULL,
-    ""ContractJson"" TEXT NULL
+    ""ContractJson"" TEXT NULL,
+    ""ClearedByOwner"" INTEGER NOT NULL DEFAULT 0
 );");
         ctx.Database.ExecuteSqlRaw(@"CREATE UNIQUE INDEX IF NOT EXISTS ""IX_ReviewItems_OpId"" ON ""ReviewItems"" (""OpId"");");
         ctx.Database.ExecuteSqlRaw(@"CREATE INDEX IF NOT EXISTS ""IX_ReviewItems_TargetOwnerName"" ON ""ReviewItems"" (""TargetOwnerName"");");
         ctx.Database.ExecuteSqlRaw(@"CREATE INDEX IF NOT EXISTS ""IX_ReviewItems_ByName"" ON ""ReviewItems"" (""ByName"");");
+
+        // 老库补列：ReviewItems 加「发起方已清除」本地隐藏标记（v1.0.3 之后新增）。
+        EnsureColumn(ctx, "ReviewItems", "ClearedByOwner", @"INTEGER NOT NULL DEFAULT 0");
+    }
+
+    /// <summary>为已存在的表幂等补列：SQLite 无 ADD COLUMN IF NOT EXISTS，先查 PRAGMA table_info 再决定是否补，
+    /// 避免每次启动都触发「duplicate column」异常。</summary>
+    private static void EnsureColumn(LedgerDbContext ctx, string table, string column, string decl)
+    {
+        var conn = ctx.Database.GetDbConnection();
+        bool wasClosed = conn.State != System.Data.ConnectionState.Open;
+        if (wasClosed) conn.Open();
+        try
+        {
+            bool exists = false;
+            using (var probe = conn.CreateCommand())
+            {
+                probe.CommandText = $@"PRAGMA table_info(""{table}"");";
+                using var r = probe.ExecuteReader();
+                while (r.Read())
+                    if (string.Equals(r.GetString(1), column, StringComparison.OrdinalIgnoreCase)) { exists = true; break; }
+            }
+            if (!exists)
+            {
+                using var alter = conn.CreateCommand();
+                alter.CommandText = $@"ALTER TABLE ""{table}"" ADD COLUMN ""{column}"" {decl};";
+                alter.ExecuteNonQuery();
+            }
+        }
+        finally { if (wasClosed) conn.Close(); }
     }
 
     public string DbPath => _dbPath;
@@ -415,7 +446,8 @@ CREATE TABLE IF NOT EXISTS ""ReviewItems"" (
     public List<ReviewItem> GetOutgoingReviews(string myName, bool includeClosed = true)
     {
         using var ctx = CreateContext();
-        var q = ctx.ReviewItems.Where(x => x.ByName == myName && x.Status != ReviewStatus.Withdrawn);
+        // 已撤回、已被本人清除(隐藏)的都不在「我发起的」列表展示。
+        var q = ctx.ReviewItems.Where(x => x.ByName == myName && x.Status != ReviewStatus.Withdrawn && !x.ClearedByOwner);
         if (!includeClosed) q = q.Where(x => x.Status == ReviewStatus.Pending);
         return q.OrderByDescending(x => x.CreatedUtc).ToList();
     }
@@ -441,22 +473,30 @@ CREATE TABLE IF NOT EXISTS ""ReviewItems"" (
     }
 
     /// <summary>
-    /// 物理删除我发起的、<b>已结（非待办）</b>历史审批项，用于清理「我发起的」列表里的残留通知。
-    /// 只允许删已结项：待办项须走 <see cref="WithdrawReviewItem"/> 撤回，否则对方那端待办无法同步移除。
-    /// 已结项不在 <see cref="GetOutgoingForUpload"/> 的上传范围内，删除后不会经同步复活；
-    /// 审计日志(AuditLog)独立留存、不受影响。返回实际删除条数。
+    /// 从我发起的「我发起的」列表清除通知（无需等对方知晓）。按状态分别处理，保证与云端同步一致、不会复活：
+    /// <list type="bullet">
+    /// <item><b>待对方知晓(Pending)</b>：置 <see cref="ReviewItem.ClearedByOwner"/> 本地隐藏——记录仍保留、仍经
+    /// <see cref="GetOutgoingForUpload"/> 上云，<b>对方仍能看到并知晓</b>；此标记不参与 Ingest 合并，故不会被同步覆盖。</item>
+    /// <item><b>已结(非待办)</b>：物理删除历史——已结项不在上传范围，删后不会复活。</item>
+    /// </list>
+    /// 审计日志(AuditLog)独立留存、不受影响。返回实际清除条数。
     /// </summary>
-    public int DeleteClosedOutgoing(IReadOnlyList<string> opIds, string byName)
+    public int ClearOutgoing(IReadOnlyList<string> opIds, string byName)
     {
         if (opIds.Count == 0) return 0;
         using var ctx = CreateContext();
         var rows = ctx.ReviewItems
-            .Where(x => x.ByName == byName && x.Status != ReviewStatus.Pending && opIds.Contains(x.OpId))
+            .Where(x => x.ByName == byName && !x.ClearedByOwner && opIds.Contains(x.OpId))
             .ToList();
-        if (rows.Count == 0) return 0;
-        ctx.ReviewItems.RemoveRange(rows);
-        ctx.SaveChanges();
-        return rows.Count;
+        int n = 0;
+        foreach (var e in rows)
+        {
+            if (e.Status == ReviewStatus.Pending) e.ClearedByOwner = true; // 本地隐藏，对方不受影响
+            else ctx.ReviewItems.Remove(e);                                // 已结：删历史
+            n++;
+        }
+        if (n > 0) ctx.SaveChanges();
+        return n;
     }
 
     /// <summary>按 ContractUid 取一条合同（审批对照用）。</summary>
@@ -500,6 +540,7 @@ CREATE TABLE IF NOT EXISTS ""ReviewItems"" (
         ByName = s.ByName, ByCode = s.ByCode, CreatedUtc = s.CreatedUtc,
         DecidedUtc = s.DecidedUtc, DecideNote = s.DecideNote,
         Summary = s.Summary, ContractJson = s.ContractJson,
+        ClearedByOwner = s.ClearedByOwner,
     };
 
     public void WriteAudit(string action, string? by, string? entity = null, string? note = null)

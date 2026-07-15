@@ -87,15 +87,21 @@ public partial class LedgerBrowseView : UserControl
         if (dlg.ShowDialog() != true) return;
 
         string path = dlg.FileName;
+
+        // 选完文件先问落库策略：覆盖现有（幂等更新）还是添加为新记录（一律追加不覆盖）。取消则不导入。
+        var mode = ImportModeDialog.Ask(Window.GetWindow(this), path);
+        if (mode == null) return;
+
         var vm = Vm;
         SetBusy(true, "正在导入，请稍候…");
         try
         {
             // 解析 + 落库放后台线程，避免卡住 UI 线程（导入卡死的直接原因）；
             // 拿到结果后回到 UI 线程刷新表格。
-            var outcome = await Task.Run(() => vm.ImportExcelToStore(path));
+            var outcome = await Task.Run(() => vm.ImportExcelToStore(path, mode.Value));
             vm.LoadFrom(outcome.Data);
-            MessageBox.Show($"导入成功：{outcome.Imported} 条已写入总库。\n数据质量提示：{outcome.Anomalies} 项（见达成总览底部）。",
+            string modeText = mode == Weitong.Ledger.Data.Import.ImportMode.AppendNew ? "添加为新记录" : "覆盖现有";
+            MessageBox.Show($"导入成功（{modeText}）：{outcome.Imported} 条已写入总库。\n数据质量提示：{outcome.Anomalies} 项（见导出的详细报告）。",
                 "导入完成", MessageBoxButton.OK, MessageBoxImage.Information);
         }
         catch (Exception ex)

@@ -25,7 +25,9 @@
                    Margin="0,0,18,0" Foreground="#9DB4D6" FontSize="12"/>
 
         <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
-          <Button Content="刷新" Style="{StaticResource ToolBtn}" Click="OnRefresh"/>
+          <TextBlock x:Name="ClockText" VerticalAlignment="Center" Margin="0,0,14,0"
+                     Foreground="#9DB4D6" FontSize="12"/>
+          <Button x:Name="RefreshBtn" Content="刷新" Style="{StaticResource ToolBtn}" Click="OnRefresh"/>
         </StackPanel>
       </Grid>
     </Border>

@@ -197,6 +197,7 @@ public sealed class LedgerGridViewModel : INotifyPropertyChanged
         if (!r.IsDirty && !r.IsNew) return;
         _store.UpsertContracts(new[] { r.Model }, _currentPerson);
         Raise(nameof(StatusText));
+        NeedsSync?.Invoke();   // 普通编辑也即时上云（外壳会防抖合并，避免每行一次请求）
     }
 
     // ————————— 台账明细·管理（管理员）—————————
@@ -279,11 +280,19 @@ public sealed class LedgerGridViewModel : INotifyPropertyChanged
     /// 因此可安全放到 Task.Run 里跑，避免解析/写库把 UI 线程卡住（导入卡死的直接原因）。
     /// 拿到结果后再由调用方在 UI 线程调用 <see cref="LoadFrom"/> 刷新表格。
     /// </summary>
-    public ImportOutcome ImportExcelToStore(string path)
+    public ImportOutcome ImportExcelToStore(string path, Weitong.Ledger.Data.Import.ImportMode mode)
     {
         var res = new Weitong.Ledger.Data.Import.ExcelImporter().ImportFile(path, DateTime.UtcNow, _currentPerson);
+
+        // 「添加为新记录」：给每行换一个全新唯一键，使其在 UpsertContracts 里一律走 INSERT，
+        // 绝不与库中已有的「工作表#行号」撞键覆盖。「覆盖现有」则保留原键，命中即更新（幂等重导入）。
+        if (mode == Weitong.Ledger.Data.Import.ImportMode.AppendNew)
+            foreach (var c in res.Contracts)
+                c.ContractUid = "imp-" + Guid.NewGuid().ToString("N")[..12];
+
         int n = _store.UpsertContracts(res.Contracts, _currentPerson);
-        _store.WriteAudit("Import", _currentPerson, "Contract", $"导入 {n} 条 · 数据质量提示 {res.Anomalies.Count}");
+        string modeText = mode == Weitong.Ledger.Data.Import.ImportMode.AppendNew ? "添加为新记录" : "覆盖现有";
+        _store.WriteAudit("Import", _currentPerson, "Contract", $"导入 {n} 条（{modeText}）· 数据质量提示 {res.Anomalies.Count}");
         var data = _personalOnly ? _store.GetContractsFor(_currentPerson) : _store.GetAllContracts();
         return new ImportOutcome(n, res.Anomalies.Count, data);
     }

@@ -66,6 +66,10 @@ public sealed class ReviewItem
     /// <summary>提案的完整合同快照(JSON)，供销售端确认后落库；删除/纯标记可为空。</summary>
     public string? ContractJson { get; set; }
 
+    /// <summary>发起方（管理员）已把本条从自己的「我发起的」列表清除：<b>仅本地视图隐藏</b>，
+    /// 不影响对方的通知与知晓、不改已生效数据。云端合并（Ingest）不覆盖此标记，故对方仍能看到并知晓。</summary>
+    public bool ClearedByOwner { get; set; }
+
     /// <summary>是否已结（非待办）。</summary>
     public bool IsClosed => Status != ReviewStatus.Pending;
 }

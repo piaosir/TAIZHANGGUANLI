@@ -72,7 +72,6 @@ public sealed class DashboardViewModel : INotifyPropertyChanged
 
     public ObservableCollection<KpiTile> Kpis { get; } = new();
     public ObservableCollection<AchievementRow> Achievements { get; } = new();
-    public ObservableCollection<AnomalyRow> Anomalies { get; } = new();
 
     public ISeries[] RankSeries { get; private set; } = Array.Empty<ISeries>();
     public Axis[] RankX { get; private set; } = Array.Empty<Axis>();
@@ -108,7 +107,6 @@ public sealed class DashboardViewModel : INotifyPropertyChanged
                    (_anoms.Count > 0 ? $" · 数据质量提示 {_anoms.Count} 项" : "");
 
         BuildAchievements();
-        BuildAnomalies();
         BuildFunnel();
         BuildMonthly();
         BuildStack();
@@ -245,12 +243,6 @@ public sealed class DashboardViewModel : INotifyPropertyChanged
             SharePct = 100,
             IsTotal = true,
         });
-    }
-
-    private void BuildAnomalies()
-    {
-        Anomalies.Clear();
-        foreach (var a in _anoms) Anomalies.Add(a);
     }
 
     private void BuildRanking()

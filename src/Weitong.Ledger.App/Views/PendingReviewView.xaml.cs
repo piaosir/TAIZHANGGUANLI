@@ -75,7 +75,7 @@ public partial class PendingReviewView : UserControl
         var sel = Vm.Outgoing.Where(v => v.IsSelected).ToList();
         if (sel.Count == 0) { Info("请先勾选要撤回的通知。"); return; }
         int withdrawable = sel.Count(v => v.CanWithdraw);
-        if (withdrawable == 0) { Info("选中项对方均已知晓，无法撤回。\n如需从列表移除这些历史记录，请点『清除已完成』。"); return; }
+        if (withdrawable == 0) { Info("选中项对方均已知晓，无法撤回。\n如需从列表移除这些记录，请点『清除』。"); return; }
         if (MessageBox.Show($"撤回选中的 {withdrawable} 条通知？\n改动已生效、不受影响；仅对方尚未看到的通知会消失。", "批量撤回通知",
                 MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK) return;
         var (withdrawn, skipped) = Vm.WithdrawMany(sel);
@@ -83,28 +83,33 @@ public partial class PendingReviewView : UserControl
         Info($"已撤回 {withdrawn} 条。" + (skipped > 0 ? $"\n{skipped} 条无法撤回（对方可能已知晓），已跳过。" : ""));
     }
 
-    // 单条清除：已完成（已知晓/已驳回）的历史记录——仅从「我发起的」列表移除，不影响已生效改动，也不会再出现
+    // 单条清除：从「我发起的」列表移除。待对方知晓的仅本地隐藏（对方仍能看到并知晓）；已结的删历史。均不影响已生效改动。
     private void OnClearOne(object sender, RoutedEventArgs e)
     {
         if (ItemOf(sender) is not { } vm) return;
-        if (MessageBox.Show($"清除这条已完成的记录？\n仅从你的『我发起的』列表移除，不影响已生效的改动，且不会再出现。\n\n{vm.Summary}",
-                "清除记录", MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK) return;
-        Vm.ClearClosed(new[] { vm });
+        string body = vm.CanWithdraw
+            ? "对方尚未知晓。清除后仅从你的『我发起的』列表隐藏，对方仍能看到并知晓，数据改动不受影响。"
+            : "清除这条记录，仅从你的『我发起的』列表移除，不影响已生效的改动。";
+        if (MessageBox.Show($"{body}\n\n{vm.Summary}",
+                "清除通知", MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK) return;
+        Vm.Clear(new[] { vm });
     }
 
-    // 批量清除：有勾选则清除勾选中的已完成项；未勾选则清除列表中全部已完成项
+    // 批量清除：有勾选则清除勾选项；未勾选则清除列表中全部。无需等对方知晓——待知晓的仅本地隐藏，对方不受影响。
     private void OnBatchClear(object sender, RoutedEventArgs e)
     {
         var selected = Vm.Outgoing.Where(v => v.IsSelected).ToList();
         var scope = selected.Count > 0 ? selected : Vm.Outgoing.ToList();
         var targets = scope.Where(v => v.CanClear).ToList();
-        if (targets.Count == 0) { Info("没有可清除的已完成记录。\n仍待对方知晓的通知请用『撤回』移除。"); return; }
+        if (targets.Count == 0) { Info("『我发起的』列表暂无可清除的通知。"); return; }
+        int pending = targets.Count(v => v.CanWithdraw);
         string where = selected.Count > 0 ? "选中的" : "全部";
-        if (MessageBox.Show($"清除{where} {targets.Count} 条已完成的历史记录？\n仅从你的『我发起的』列表移除，不影响已生效的改动，且不会再出现。",
-                "清除已完成", MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK) return;
-        int n = Vm.ClearClosed(targets);
+        string note = pending > 0 ? $"\n其中 {pending} 条对方尚未知晓：仅从你的列表隐藏，对方仍能看到并知晓。" : "";
+        if (MessageBox.Show($"清除{where} {targets.Count} 条通知？\n仅从你的『我发起的』列表移除，不影响已生效的改动。{note}",
+                "清除通知", MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK) return;
+        int n = Vm.Clear(targets);
         OutgoingAll.IsChecked = false;
-        Info($"已清除 {n} 条历史记录。");
+        Info($"已清除 {n} 条通知。");
     }
 
     private static void Info(string msg) => MessageBox.Show(msg, "提示", MessageBoxButton.OK, MessageBoxImage.Information);

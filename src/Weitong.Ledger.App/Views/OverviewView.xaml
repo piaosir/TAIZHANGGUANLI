@@ -116,24 +116,6 @@
           </StackPanel>
         </Border>
       </Grid>
-
-      <!-- 数据质量 -->
-      <Border Style="{StaticResource Card}" Margin="0,14,0,0" Padding="16,13">
-        <StackPanel>
-          <TextBlock Text="数据质量提示" Style="{StaticResource SectionTitle}"/>
-          <TextBlock Text="软件自动捕获的需人工核对项（如 预计到款 ≠ 月度之和、金额异常），Excel 中不易发现。"
-                     Style="{StaticResource SectionHint}" Margin="0,3,0,8"/>
-          <DataGrid ItemsSource="{Binding Anomalies}" Style="{StaticResource EnterpriseGrid}" MaxHeight="220">
-            <DataGrid.Columns>
-              <DataGridTextColumn Header="工作表" Binding="{Binding Sheet}" Width="1.4*"/>
-              <DataGridTextColumn Header="行" Binding="{Binding Row}" Width="0.5*"/>
-              <DataGridTextColumn Header="字段" Binding="{Binding Field}" Width="1.2*"/>
-              <DataGridTextColumn Header="值" Binding="{Binding Value}" Width="1.3*"/>
-              <DataGridTextColumn Header="提示" Binding="{Binding Reason}" Width="3*"/>
-            </DataGrid.Columns>
-          </DataGrid>
-        </StackPanel>
-      </Border>
     </StackPanel>
   </ScrollViewer>
 </UserControl>

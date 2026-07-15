@@ -138,19 +138,18 @@ public sealed class ReviewService
         return ok;
     }
 
-    /// <summary>清除我发起的、<b>已结（已知晓/已驳回）</b>历史通知：仅从本地「我发起的」列表移除，
-    /// 不影响已生效的改动、不动审计，且不会经同步复活（已结项不在上传包内）。待办项会被跳过。
-    /// 返回实际清除条数。</summary>
-    public int ClearClosedOutgoing(IEnumerable<ReviewItem> items)
+    /// <summary>清除我发起的通知（无需等对方知晓）：从本地「我发起的」列表移除。
+    /// 尚待对方知晓的仅本地隐藏（对方仍能看到并知晓、数据改动不受影响）；已结的删历史。
+    /// 不影响已生效改动、不动审计，且不会经同步复活。返回实际清除条数。</summary>
+    public int ClearOutgoing(IEnumerable<ReviewItem> items)
     {
-        var ids = items.Where(i => i.Status != ReviewStatus.Pending)
-                       .Select(i => i.OpId)
+        var ids = items.Select(i => i.OpId)
                        .Where(s => !string.IsNullOrEmpty(s))
                        .Distinct()
                        .ToList();
         if (ids.Count == 0) return 0;
-        var n = _store.DeleteClosedOutgoing(ids, MyName);
-        if (n > 0) _store.WriteAudit("ClearReviewHistory", MyName, "Contract", $"清除已完成通知 {n} 条");
+        var n = _store.ClearOutgoing(ids, MyName);
+        if (n > 0) _store.WriteAudit("ClearReviewHistory", MyName, "Contract", $"清除通知 {n} 条");
         return n;
     }
 

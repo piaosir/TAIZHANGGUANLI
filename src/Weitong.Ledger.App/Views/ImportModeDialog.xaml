@@ -1,0 +1,45 @@
+<Window x:Class="Weitong.Ledger.App.Views.ImportModeDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="导入方式" Height="308" Width="500"
+        WindowStartupLocation="CenterOwner" ResizeMode="NoResize"
+        FontFamily="{StaticResource F.Ui}" Background="{StaticResource B.Surface}">
+  <Grid Margin="24,20">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+      <RowDefinition Height="Auto"/><RowDefinition Height="*"/>
+      <RowDefinition Height="Auto"/>
+    </Grid.RowDefinitions>
+
+    <TextBlock Grid.Row="0" x:Name="TitleText" Text="选择导入方式" FontSize="16" FontWeight="Bold"
+               Foreground="{StaticResource B.TextPrimary}"/>
+    <TextBlock Grid.Row="1" x:Name="FileText" Margin="0,6,0,14" TextWrapping="Wrap"
+               Foreground="{StaticResource B.TextSecondary}" FontSize="12.5"/>
+
+    <!-- 覆盖现有 -->
+    <Border Grid.Row="2" BorderBrush="{StaticResource B.Hairline}" BorderThickness="1" CornerRadius="6" Padding="14,11" Margin="0,0,0,10">
+      <StackPanel>
+        <TextBlock Text="覆盖现有" FontSize="13.5" FontWeight="SemiBold" Foreground="{StaticResource B.TextPrimary}"/>
+        <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" FontSize="11.5" Foreground="{StaticResource B.TextMuted}"
+                   Text="按「工作表 + 行号」匹配：表中已有的记录会被更新。适合更新同一份台账。注意：会覆盖你在软件里对这些行做过的改动。"/>
+      </StackPanel>
+    </Border>
+
+    <!-- 添加为新记录 -->
+    <Border Grid.Row="3" BorderBrush="{StaticResource B.Hairline}" BorderThickness="1" CornerRadius="6" Padding="14,11" VerticalAlignment="Top">
+      <StackPanel>
+        <TextBlock Text="添加为新记录" FontSize="13.5" FontWeight="SemiBold" Foreground="{StaticResource B.TextPrimary}"/>
+        <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" FontSize="11.5" Foreground="{StaticResource B.TextMuted}"
+                   Text="本次所有行都作为新记录加入，不影响、不覆盖任何已有数据。适合导入另一批新合同。"/>
+      </StackPanel>
+    </Border>
+
+    <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+      <Button Content="取消" Width="80" Height="32" Margin="0,0,10,0" Click="OnCancel"/>
+      <Button Content="添加为新记录" Width="120" Height="32" Margin="0,0,10,0" Click="OnAppend"
+              Background="{StaticResource B.Surface}" BorderBrush="{StaticResource B.Hairline}" BorderThickness="1"/>
+      <Button Content="覆盖现有" Width="110" Height="32" Click="OnOverwrite"
+              Background="{StaticResource B.Accent}" Foreground="White" FontWeight="SemiBold" BorderThickness="0"/>
+    </StackPanel>
+  </Grid>
+</Window>

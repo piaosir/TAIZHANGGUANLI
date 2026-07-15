@@ -22,12 +22,15 @@ public sealed class PendingReviewViewModel : INotifyPropertyChanged
 
     public PendingReviewViewModel(ReviewService review) => _review = review;
 
-    public void Load()
+    public void Load() => Apply(_review.Incoming(), _review.Outgoing());
+
+    /// <summary>用预取的列表填充（读库可放后台线程完成，这里只在 UI 线程填集合）。</summary>
+    public void Apply(IReadOnlyList<ReviewItem> incoming, IReadOnlyList<ReviewItem> outgoing)
     {
         Incoming.Clear();
-        foreach (var it in _review.Incoming()) Incoming.Add(new ReviewItemVm(it));
+        foreach (var it in incoming) Incoming.Add(new ReviewItemVm(it));
         Outgoing.Clear();
-        foreach (var it in _review.Outgoing()) Outgoing.Add(new ReviewItemVm(it));
+        foreach (var it in outgoing) Outgoing.Add(new ReviewItemVm(it));
         Raise(nameof(IncomingCount)); Raise(nameof(HasIncoming)); Raise(nameof(NoIncoming));
         Raise(nameof(HasOutgoing)); Raise(nameof(NoOutgoing)); Raise(nameof(IncomingHeader));
     }
@@ -75,13 +78,13 @@ public sealed class PendingReviewViewModel : INotifyPropertyChanged
         return (ok, items.Count - ok);
     }
 
-    /// <summary>清除「我发起的」里已结（已知晓/已驳回）的历史记录：仅本地移除，不影响已生效改动，
-    /// 不会经同步复活。仅处理已结项，待办项被忽略。返回清除条数。</summary>
-    public int ClearClosed(IReadOnlyList<ReviewItemVm> items)
+    /// <summary>清除「我发起的」里选中的通知（无需等对方知晓）：尚待对方知晓的仅本地隐藏（对方仍能看到并知晓），
+    /// 已结的删历史。均不影响已生效改动，不会经同步复活。返回清除条数。</summary>
+    public int Clear(IReadOnlyList<ReviewItemVm> items)
     {
         var targets = items.Where(v => v.CanClear).ToList();
         if (targets.Count == 0) return 0;
-        var n = _review.ClearClosedOutgoing(targets.Select(v => v.Model));
+        var n = _review.ClearOutgoing(targets.Select(v => v.Model));
         if (n > 0) { Load(); Changed?.Invoke(); }
         return n;
     }
@@ -146,10 +149,10 @@ public sealed class ReviewItemVm : INotifyPropertyChanged
     public string ConfirmText => "知道了";
     /// <summary>改动已生效，不再提供驳回（恒为 false）。</summary>
     public bool CanReject => false;
-    /// <summary>发起方可撤回：仍待对方知晓时。</summary>
+    /// <summary>发起方可撤回：仍待对方知晓时（撤回会把对方那条一并移除）。</summary>
     public bool CanWithdraw => Model.Status == ReviewStatus.Pending;
-    /// <summary>已结（已知晓/已驳回等非待办）→ 可从「我发起的」列表清除该历史记录。</summary>
-    public bool CanClear => Model.Status != ReviewStatus.Pending;
+    /// <summary>任何在列表里显示的通知都可清除：待对方知晓的仅本地隐藏（对方不受影响），已结的删历史。</summary>
+    public bool CanClear => true;
 
     public string CreatedText => Model.CreatedUtc.ToLocalTime().ToString("MM-dd HH:mm");
 
