@@ -74,6 +74,7 @@
                       Visibility="{Binding HasOutgoing, Converter={StaticResource BoolVis}}">
             <CheckBox x:Name="OutgoingAll" Content="全选" VerticalAlignment="Center" Margin="0,0,12,0" Click="OnOutgoingSelectAll"/>
             <Button Content="批量撤回" Click="OnBatchWithdraw" Style="{StaticResource GridToolBtn}"/>
+            <Button Content="清除已完成" Click="OnBatchClear" Style="{StaticResource GridToolBtn}"/>
           </StackPanel>
         </DockPanel>
         <Border Style="{StaticResource Card}" Padding="18,14" Visibility="{Binding NoOutgoing, Converter={StaticResource BoolVis}}">
@@ -109,6 +110,8 @@
                     <Button Content="查看" Click="OnViewOutgoing" Style="{StaticResource GridToolBtn}"/>
                     <Button Content="撤回" Click="OnWithdraw" Style="{StaticResource GridToolBtn}"
                             Visibility="{Binding CanWithdraw, Converter={StaticResource BoolVis}}"/>
+                    <Button Content="清除" Click="OnClearOne" Style="{StaticResource GridToolBtn}"
+                            Visibility="{Binding CanClear, Converter={StaticResource BoolVis}}"/>
                   </StackPanel>
                 </Grid>
               </Border>

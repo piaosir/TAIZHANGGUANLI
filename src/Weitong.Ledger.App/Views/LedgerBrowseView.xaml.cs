@@ -98,7 +98,15 @@ public partial class LedgerBrowseView : UserControl
             MessageBox.Show($"导入成功：{outcome.Imported} 条已写入总库。\n数据质量提示：{outcome.Anomalies} 项（见达成总览底部）。",
                 "导入完成", MessageBoxButton.OK, MessageBoxImage.Information);
         }
-        catch (Exception ex) { MessageBox.Show("导入失败：\n" + ex.Message, "错误", MessageBoxButton.OK, MessageBoxImage.Error); }
+        catch (Exception ex)
+        {
+            // 展开内层异常：EF 的 DbUpdateException 外层信息很笼统（"保存实体变更时出错"），
+            // 真正原因（如 UNIQUE/NOT NULL 约束）在 InnerException 里，务必一并显示，便于排查。
+            var sb = new System.Text.StringBuilder("导入失败：\n").Append(ex.Message);
+            for (var inner = ex.InnerException; inner != null; inner = inner.InnerException)
+                sb.Append("\n· ").Append(inner.Message);
+            MessageBox.Show(sb.ToString(), "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
         finally { SetBusy(false); }
     }
 

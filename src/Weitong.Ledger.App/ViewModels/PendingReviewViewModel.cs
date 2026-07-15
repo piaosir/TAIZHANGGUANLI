@@ -75,6 +75,17 @@ public sealed class PendingReviewViewModel : INotifyPropertyChanged
         return (ok, items.Count - ok);
     }
 
+    /// <summary>清除「我发起的」里已结（已知晓/已驳回）的历史记录：仅本地移除，不影响已生效改动，
+    /// 不会经同步复活。仅处理已结项，待办项被忽略。返回清除条数。</summary>
+    public int ClearClosed(IReadOnlyList<ReviewItemVm> items)
+    {
+        var targets = items.Where(v => v.CanClear).ToList();
+        if (targets.Count == 0) return 0;
+        var n = _review.ClearClosedOutgoing(targets.Select(v => v.Model));
+        if (n > 0) { Load(); Changed?.Invoke(); }
+        return n;
+    }
+
     /// <summary>构建内容详情，供"查看"弹窗展示。管理员的增删改已生效，这里展示该记录的当前内容 +
     /// 一句话说明管理员做了什么（改动明细见 <see cref="ReviewItem.Summary"/>：字段 旧值→新值）。</summary>
     public ReviewDetail BuildDetail(ReviewItemVm vm, bool isIncoming)
@@ -137,6 +148,8 @@ public sealed class ReviewItemVm : INotifyPropertyChanged
     public bool CanReject => false;
     /// <summary>发起方可撤回：仍待对方知晓时。</summary>
     public bool CanWithdraw => Model.Status == ReviewStatus.Pending;
+    /// <summary>已结（已知晓/已驳回等非待办）→ 可从「我发起的」列表清除该历史记录。</summary>
+    public bool CanClear => Model.Status != ReviewStatus.Pending;
 
     public string CreatedText => Model.CreatedUtc.ToLocalTime().ToString("MM-dd HH:mm");
 

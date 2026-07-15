@@ -138,6 +138,22 @@ public sealed class ReviewService
         return ok;
     }
 
+    /// <summary>清除我发起的、<b>已结（已知晓/已驳回）</b>历史通知：仅从本地「我发起的」列表移除，
+    /// 不影响已生效的改动、不动审计，且不会经同步复活（已结项不在上传包内）。待办项会被跳过。
+    /// 返回实际清除条数。</summary>
+    public int ClearClosedOutgoing(IEnumerable<ReviewItem> items)
+    {
+        var ids = items.Where(i => i.Status != ReviewStatus.Pending)
+                       .Select(i => i.OpId)
+                       .Where(s => !string.IsNullOrEmpty(s))
+                       .Distinct()
+                       .ToList();
+        if (ids.Count == 0) return 0;
+        var n = _store.DeleteClosedOutgoing(ids, MyName);
+        if (n > 0) _store.WriteAudit("ClearReviewHistory", MyName, "Contract", $"清除已完成通知 {n} 条");
+        return n;
+    }
+
     /// <summary>审批对照：本机现有的目标合同（可能为空，如新增提案）。</summary>
     public Contract? CurrentContract(ReviewItem item) => _store.GetContractByUid(item.TargetContractUid);
     /// <summary>审批对照：提案携带的合同快照（删除/纯标记可能为空）。</summary>

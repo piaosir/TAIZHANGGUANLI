@@ -195,12 +195,15 @@ CREATE TABLE IF NOT EXISTS ""ReviewItems"" (
         var uids = list.Where(m => m.Id <= 0 && !string.IsNullOrEmpty(m.ContractUid))
                        .Select(m => m.ContractUid).Distinct().ToList();
 
+        // 预载必须 IgnoreQueryFilters：软删的墓碑（IsDeleted=true）也要能被匹配到。否则重复 UID 会被当成
+        // 新行 INSERT，撞上 ContractUid 的 UNIQUE 约束 → "导入失败/保存实体变更出错"。导入的 Excel 若含此前
+        // 被删的记录，应更新并复活（SetValues 会把 IsDeleted 复位为 false）而非再插一条。
         var byId = ids.Count == 0
             ? new Dictionary<long, Contract>()
-            : ctx.Contracts.Include(c => c.Payments).Where(c => ids.Contains(c.Id)).ToDictionary(c => c.Id);
+            : ctx.Contracts.IgnoreQueryFilters().Include(c => c.Payments).Where(c => ids.Contains(c.Id)).ToDictionary(c => c.Id);
         var byUid = uids.Count == 0
             ? new Dictionary<string, Contract>()
-            : ctx.Contracts.Include(c => c.Payments).Where(c => uids.Contains(c.ContractUid)).ToDictionary(c => c.ContractUid);
+            : ctx.Contracts.IgnoreQueryFilters().Include(c => c.Payments).Where(c => uids.Contains(c.ContractUid)).ToDictionary(c => c.ContractUid);
 
         int n = 0;
         foreach (var m in list)
@@ -435,6 +438,25 @@ CREATE TABLE IF NOT EXISTS ""ReviewItems"" (
         e.Status = ReviewStatus.Withdrawn; e.DecidedUtc = DateTime.UtcNow;
         ctx.SaveChanges();
         return true;
+    }
+
+    /// <summary>
+    /// 物理删除我发起的、<b>已结（非待办）</b>历史审批项，用于清理「我发起的」列表里的残留通知。
+    /// 只允许删已结项：待办项须走 <see cref="WithdrawReviewItem"/> 撤回，否则对方那端待办无法同步移除。
+    /// 已结项不在 <see cref="GetOutgoingForUpload"/> 的上传范围内，删除后不会经同步复活；
+    /// 审计日志(AuditLog)独立留存、不受影响。返回实际删除条数。
+    /// </summary>
+    public int DeleteClosedOutgoing(IReadOnlyList<string> opIds, string byName)
+    {
+        if (opIds.Count == 0) return 0;
+        using var ctx = CreateContext();
+        var rows = ctx.ReviewItems
+            .Where(x => x.ByName == byName && x.Status != ReviewStatus.Pending && opIds.Contains(x.OpId))
+            .ToList();
+        if (rows.Count == 0) return 0;
+        ctx.ReviewItems.RemoveRange(rows);
+        ctx.SaveChanges();
+        return rows.Count;
     }
 
     /// <summary>按 ContractUid 取一条合同（审批对照用）。</summary>
