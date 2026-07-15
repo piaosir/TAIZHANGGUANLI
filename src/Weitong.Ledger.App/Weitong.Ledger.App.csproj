@@ -19,6 +19,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
     <AssemblyName>台账管理系统</AssemblyName>
+    <Version>1.0.1</Version>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <!-- 精简发布体积：不带调试符号/文档/多余卫星语言 -->
     <DebugType>none</DebugType>

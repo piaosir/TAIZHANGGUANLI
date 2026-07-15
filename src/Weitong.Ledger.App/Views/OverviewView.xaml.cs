@@ -10,6 +10,16 @@ public partial class OverviewView : UserControl
 {
     public OverviewView() => InitializeComponent();
 
+    /// <summary>「目标设置」被点击。由外壳（MainWindow）打开编辑对话框并落库/同步。</summary>
+    public event EventHandler? EditTargetRequested;
+
+    /// <summary>是否显示「目标设置」按钮（管理员，或本机未配置云同步时的本地编辑）。</summary>
+    public void EnableTargetEditing(bool canEdit) =>
+        EditTargetBtn.Visibility = canEdit ? Visibility.Visible : Visibility.Collapsed;
+
+    private void OnEditTarget(object sender, RoutedEventArgs e) =>
+        EditTargetRequested?.Invoke(this, EventArgs.Empty);
+
     private void OnExportReport(object sender, RoutedEventArgs e)
     {
         if (DataContext is not DashboardViewModel vm) return;

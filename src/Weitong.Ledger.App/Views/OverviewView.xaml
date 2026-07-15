@@ -16,10 +16,13 @@
                            IsChecked="{Binding IsWeighted, Mode=TwoWay}" ToolTip="把在谈的项目按成交概率折算后一起算，用于预测能不能完成"/>
             </StackPanel>
           </Border>
-          <Button Content="导出详细报告" Style="{StaticResource GridToolBtnPrimary}" Margin="12,0,0,0"
+          <Button Content="目标设置" x:Name="EditTargetBtn" Visibility="Collapsed"
+                  Style="{StaticResource GridToolBtn}" Margin="12,0,0,0" Click="OnEditTarget"
+                  ToolTip="设定 / 从填报表单 Excel 导入本团队的年度收入、利润、成本控制指标（管理员，保存后自动同步全组）"/>
+          <Button Content="导出详细报告" Style="{StaticResource GridToolBtnPrimary}" Margin="8,0,0,0"
                   Click="OnExportReport" ToolTip="把本页全部内容（市场策划进展、KPI、按销售明细、漏斗、月度到款、销售×层级、数据质量）导出为分 sheet 的 Excel 详细报告"/>
         </StackPanel>
-        <TextBlock Text="行业市场组 · 目标达成总览" FontSize="18" FontWeight="Bold" Foreground="{StaticResource B.TextPrimary}"/>
+        <TextBlock Text="{Binding TeamName, StringFormat={}{0} · 目标达成总览}" FontSize="18" FontWeight="Bold" Foreground="{StaticResource B.TextPrimary}"/>
       </DockPanel>
       <TextBlock Text="{Binding MetaText}" Style="{StaticResource SectionHint}" Margin="0,4,0,14"/>
 

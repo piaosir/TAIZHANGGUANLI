@@ -185,6 +185,40 @@ CREATE TABLE IF NOT EXISTS ""ReviewItems"" (
         ctx.SaveChanges();
     }
 
+    /// <summary>读取团队目标（OwnerType=team, OwnerKey=团队名）。null=该年尚未设置。</summary>
+    public Target? GetTeamTarget(string teamKey, int year)
+    {
+        using var ctx = CreateContext();
+        return ctx.Targets.FirstOrDefault(t => t.OwnerType == "team" && t.OwnerKey == teamKey && t.Year == year);
+    }
+
+    /// <summary>读取某团队的全部年度目标（升序），构建云端同步包用。</summary>
+    public List<Target> GetTeamTargets(string teamKey)
+    {
+        using var ctx = CreateContext();
+        return ctx.Targets.Where(t => t.OwnerType == "team" && t.OwnerKey == teamKey)
+                          .OrderBy(t => t.Year).ToList();
+    }
+
+    /// <summary>写入/更新团队某年度目标（(OwnerType,OwnerKey,Year) 唯一，幂等 upsert）。
+    /// <paramref name="updatedAtUtc"/> 显式指定「最后修改时间」（同步落库时用云端时间，保证冲突裁决可比较）；
+    /// 传 null 表示本机此刻编辑，取 UtcNow。</summary>
+    public void SaveTeamTarget(string teamKey, int year, long revenueCents, long profitCents, long costCeilingCents, string by, DateTime? updatedAtUtc = null)
+    {
+        using var ctx = CreateContext();
+        var t = ctx.Targets.FirstOrDefault(x => x.OwnerType == "team" && x.OwnerKey == teamKey && x.Year == year);
+        if (t == null)
+        {
+            t = new Target { OwnerType = "team", OwnerKey = teamKey, Year = year, CreatedAt = DateTime.UtcNow, CreatedBy = by, RowVersion = 1 };
+            ctx.Targets.Add(t);
+        }
+        t.RevenueTargetCents = revenueCents;
+        t.ProfitTargetCents = profitCents;
+        t.CostCeilingCents = costCeilingCents;
+        t.UpdatedAt = updatedAtUtc ?? DateTime.UtcNow; t.UpdatedBy = by; t.RowVersion++;
+        ctx.SaveChanges();
+    }
+
     /// <summary>按 ContractUid 落库一条合同（忽略外来 Id，避免跨机 Id 冲突）。用于确认管理员提案。</summary>
     public void UpsertContractByUid(Contract c, string by)
     {

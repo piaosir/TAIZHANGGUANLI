@@ -46,6 +46,31 @@ public sealed class DecisionBundle
 }
 
 /// <summary>
+/// 团队年度目标同步包。云端为<b>单一权威对象</b>（{prefix}_team/targets.json）：
+/// 由管理员设定后上传、全组下载并落本地库；含多年，天然支持逐年沿用。
+/// </summary>
+public sealed class TeamTargetBundle
+{
+    public int SchemaVersion { get; set; } = 1;
+    public string TeamName { get; set; } = "";
+    public string ByName { get; set; } = "";
+    public string ByCode { get; set; } = "";
+    public DateTime UpdatedUtc { get; set; }
+    public List<TeamTargetEntry> Entries { get; set; } = new();
+}
+
+/// <summary>某团队某一年度的三条线指标（金额为「分」）。</summary>
+public sealed class TeamTargetEntry
+{
+    public int Year { get; set; }
+    public long RevenueTargetCents { get; set; }
+    public long ProfitTargetCents { get; set; }
+    public long CostCeilingCents { get; set; }
+    /// <summary>该年度指标的最后编辑时间（UTC）。用于「谁更新用谁」的冲突裁决，避免旧值回滚新值。</summary>
+    public DateTime UpdatedUtc { get; set; }
+}
+
+/// <summary>
 /// 上云加密：默认使用<b>国密 SM4-GCM</b>（密钥由团队口令经 <b>SM3</b> 的 PBKDF2 派生）。
 /// 云上仅存密文。兼容解密早期的 AES-GCM 数据（迁移期）。
 /// 格式：MAGIC(4) | salt(16) | nonce(12) | 密文+tag

@@ -56,8 +56,9 @@ public sealed class DashboardViewModel : INotifyPropertyChanged
     private static readonly Brush BadB = Frozen(0xC5, 0x22, 0x1F), BadS = Frozen(0xFB, 0xE9, 0xE8);
     private static readonly Brush MutedB = Frozen(0x8A, 0x90, 0x99), MutedS = Frozen(0xF0, 0xF1, 0xF3);
 
-    private DashboardExporter.TeamTarget _target = new(
-        Money.FromWan(50131), Money.FromWan(42449), Money.FromWan(7682));
+    // 目标默认「未设」(0)；由外壳按 团队×当前年 从加密库读入（见 MainWindow.ApplyTeamTarget）。
+    // 不再写死年度数字，随年份逐年生效，避免多年后显示过期指标。
+    private DashboardExporter.TeamTarget _target = new(0, 0, 0);
 
     private List<Contract> _contracts = new();
     private List<string> _people = new();
@@ -123,6 +124,13 @@ public sealed class DashboardViewModel : INotifyPropertyChanged
     public void SetTarget(long revenueCents, long profitCents, long costCeilingCents)
         => _target = new DashboardExporter.TeamTarget(revenueCents, profitCents, costCeilingCents);
 
+    /// <summary>更新对标目标并<b>即时重算 KPI</b>（编辑/同步团队目标后调用，无需重载合同）。</summary>
+    public void ApplyTarget(long revenueCents, long profitCents, long costCeilingCents)
+    {
+        _target = new DashboardExporter.TeamTarget(revenueCents, profitCents, costCeilingCents);
+        BuildKpis();   // 内部 Kpis.Clear() 后重填，UI 自动刷新
+    }
+
     public void Load(ImportResult import, string sourceName)
         => Load(import.Contracts,
                 $"源：{sourceName}",
@@ -167,11 +175,17 @@ public sealed class DashboardViewModel : INotifyPropertyChanged
         Kpis.Add(TileFor("成本控制", comp[2]));
 
         long rec = _contracts.Sum(x => x.ReceivedToDateCents);
-        double? rrate = _target.RevenueCents != 0 ? (double)rec / _target.RevenueCents : null;
-        var (rb, rs, rt) = rrate >= 1 ? (GoodB, GoodS, "达标") : rrate >= 0.6 ? (WarnB, WarnS, "进行中") : (BadB, BadS, "偏慢");
+        bool noRevTarget = _target.RevenueCents == 0;
+        double? rrate = noRevTarget ? null : (double)rec / _target.RevenueCents;
+        Brush rb, rs; string rt;
+        if (noRevTarget) (rb, rs, rt) = (MutedB, MutedS, "未设指标");
+        else if (rrate >= 1) (rb, rs, rt) = (GoodB, GoodS, "达标");
+        else if (rrate >= 0.6) (rb, rs, rt) = (WarnB, WarnS, "进行中");
+        else (rb, rs, rt) = (BadB, BadS, "偏慢");
         Kpis.Add(new KpiTile("累计到款进度",
             rrate.HasValue ? (rrate.Value * 100).ToString("F1") + "%" : "—",
-            $"已到款 {Money.FormatWan(rec)} / 指标 {Money.FormatWan(_target.RevenueCents)}",
+            noRevTarget ? $"已到款 {Money.FormatWan(rec)} / 指标 尚未设置"
+                        : $"已到款 {Money.FormatWan(rec)} / 指标 {Money.FormatWan(_target.RevenueCents)}",
             "现金回收进度", rt, rb, rs));
     }
 

@@ -34,6 +34,7 @@ public sealed class CloudSync
     private string ReviewPrefix => _s.Prefix + "_review/";
     private string ReviewKey(string byCode) => ReviewPrefix + "by-" + byCode + ".json";
     private string DecisionKey(string byCode) => ReviewPrefix + "dec-" + byCode + ".json";
+    private string TeamTargetKey => _s.Prefix + "_team/targets.json"; // 全组共享的单一权威对象
 
     private byte[] Protect(byte[] plain) =>
         _s.HasTeamKey ? TeamCrypto.Encrypt(plain, _s.TeamKey) : plain;
@@ -145,6 +146,23 @@ public sealed class CloudSync
             catch (Exception ex) { log?.Invoke($"拉取审批项 {key} 失败：{ex.Message}"); }
         }
         return byOp.Values.ToList();
+    }
+
+    // ————————— 团队目标（管理员统一设定，全组共享） —————————
+
+    /// <summary>上传团队年度目标（管理员）。云端单一对象，直接覆盖。</summary>
+    public void UploadTeamTargets(TeamTargetBundle bundle)
+    {
+        var json = JsonSerializer.SerializeToUtf8Bytes(bundle, JsonOpts);
+        var cos = Build();
+        cos.PutObject(new PutObjectRequest(_s.Bucket, TeamTargetKey, Protect(json)));
+    }
+
+    /// <summary>下载团队年度目标；云端尚不存在（首次）或读取失败 → 返回 null（调用方不覆盖本地）。</summary>
+    public TeamTargetBundle? DownloadTeamTargets()
+    {
+        try { return JsonSerializer.Deserialize<TeamTargetBundle>(Unprotect(GetBytes(TeamTargetKey)), JsonOpts); }
+        catch { return null; }
     }
 
     /// <summary>拉取全部销售的决策，展平去重（按 OpId，取较晚决策）。</summary>
