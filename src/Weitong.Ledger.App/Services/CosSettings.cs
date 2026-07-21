@@ -4,8 +4,9 @@ using System.Text.Json;
 namespace Weitong.Ledger.App.Services;
 
 /// <summary>
-/// 后台 COS 连接配置。从应用目录下的 cos.json 读取（管理员一次性填好、随软件分发）。
-/// 普通销售看不到、不用配。地域/桶名预置，密钥由管理员填一次。
+/// 后台 COS 连接配置。密钥<b>随 exe 内置</b>（cos.json 作为嵌入资源编译进程序集），
+/// 分发后销售零配置、也不会在别人电脑上再生成 cos.json 文件。
+/// 仍支持在 exe 旁放一份外部 cos.json 覆盖内置（换密钥无需重编译）。
 /// </summary>
 public sealed class CosSettings
 {
@@ -53,34 +54,49 @@ public sealed class CosSettings
     };
 
     /// <summary>
-    /// 读取 cos.json，优先级：① exe 旁（分发包）② 用户稳定目录（%LocalAppData%）。
-    /// 任一处已配置好，就采用它，并<b>同步补写到另一处</b>，使配置在"重建/清理/换构建"后依然生效。
-    /// 两处都没有可用配置时，在 exe 旁写一份模板（密钥待管理员填一次）后返回未配置。
+    /// 读取 COS 配置，优先级：
+    /// ① exe 旁的外部 cos.json（管理员放置可覆盖内置，用于换密钥而无需重编译）；
+    /// ② 用户稳定目录（%LocalAppData%）的外部 cos.json（历史遗留/手动放置）；
+    /// ③ <b>内置：编译进 exe 的 cos.json 嵌入资源</b>——随软件分发，销售零配置、不在他机生成文件；
+    /// ④ 三者皆无（多为他人 fresh clone、构建时未放 cos.json）：写一份模板到 exe 旁并返回未配置，保持旧的开发机行为。
+    /// 命中①/②/③时<b>不再写任何文件</b>——从此别人电脑上不会再出现 cos.json。
     /// </summary>
     public static CosSettings Load()
     {
-        // ① exe 旁（随分发包）——优先
+        // ① exe 旁的外部 cos.json——优先（管理员可放一份覆盖内置）
         var beside = TryRead(FilePath);
-        if (beside is { IsConfigured: true }) { TryWrite(UserFilePath, beside); return beside; }
+        if (beside is { IsConfigured: true }) return beside;
 
-        // ② 用户稳定目录——bin 被清理/重建后仍能同步的关键
+        // ② 用户稳定目录的外部 cos.json
         var user = TryRead(UserFilePath);
-        if (user is { IsConfigured: true }) { TryWrite(FilePath, user); return user; }
+        if (user is { IsConfigured: true }) return user;
 
-        // ③ 两处都未配置：写模板到 exe 旁（保留已有的地域/桶名），返回未配置
+        // ③ 内置嵌入资源——随 exe 分发，销售无需任何配置；命中即用，不落地任何文件
+        var embedded = TryReadEmbedded();
+        if (embedded is { IsConfigured: true }) return embedded;
+
+        // ④ 全无可用配置：写模板到 exe 旁（保留已有的地域/桶名），返回未配置
         var template = beside ?? new CosSettings
         {
             SecretId = "在这里填写你的SecretId",
             SecretKey = "在这里填写你的SecretKey",
             TeamKey = "在这里填写团队同步口令（全队一致，自定义一句话）",
-            Roster = new()
-            {
-                new RosterMember { Name = "朴东旭", Team = "行业市场组", Role = "admin" },
-                new RosterMember { Name = "乜学郁", Team = "行业市场组", Role = "sales" },
-            },
         };
         TryWrite(FilePath, template);
         return template;
+    }
+
+    /// <summary>读取编译进 exe 的 cos.json 嵌入资源（LogicalName=cos.json）。未内置（资源不存在）时返回 null。</summary>
+    private static CosSettings? TryReadEmbedded()
+    {
+        try
+        {
+            using var stream = typeof(CosSettings).Assembly.GetManifestResourceStream("cos.json");
+            if (stream is null) return null;
+            using var reader = new StreamReader(stream);
+            return JsonSerializer.Deserialize<CosSettings>(reader.ReadToEnd(), JsonOpts);
+        }
+        catch { return null; }
     }
 
     private static CosSettings? TryRead(string path)

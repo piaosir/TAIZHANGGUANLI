@@ -12,6 +12,16 @@
     <PackageReference Include="Tencent.QCloud.Cos.Sdk" Version="5.4.51" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- 后台 COS 凭据随 exe 内置：cos.json 被编译进程序集（LogicalName=cos.json），
+         分发后销售无需任何配置、也不再在别人电脑上生成 cos.json 文件。
+         该文件本身仍被 .gitignore 忽略（明文密钥绝不入库）；仅本机构建时读取，
+         用 Condition 兜底——文件缺失（如他人 fresh clone）时不报错，仅内置不生效。 -->
+    <EmbeddedResource Include="cos.json" Condition="Exists('cos.json')">
+      <LogicalName>cos.json</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net9.0-windows</TargetFramework>
@@ -19,7 +29,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
     <AssemblyName>台账管理系统</AssemblyName>
-    <Version>1.0.5</Version>
+    <Version>1.0.7</Version>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <!-- 精简发布体积：不带调试符号/文档/多余卫星语言 -->
     <DebugType>none</DebugType>
