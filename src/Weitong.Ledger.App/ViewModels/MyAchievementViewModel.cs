@@ -12,15 +12,15 @@ namespace Weitong.Ledger.App.ViewModels;
 public sealed class MyAchievementViewModel : INotifyPropertyChanged
 {
     private readonly LedgerStore _store;
-    private readonly string _personCode;
     private readonly int _year;
 
     public string Name { get; }
     public DashboardViewModel Dash { get; } = new();
 
-    public MyAchievementViewModel(LedgerStore store, string personCode, string name, int year)
+    // 个人目标按「姓名」存取（随人走、可跨设备云同步）。此前按「机器码」存 → 换台电脑目标就变、且从不上云，已修。
+    public MyAchievementViewModel(LedgerStore store, string name, int year)
     {
-        _store = store; _personCode = personCode; Name = name; _year = year;
+        _store = store; Name = name; _year = year;
         Load();
     }
 
@@ -32,10 +32,13 @@ public sealed class MyAchievementViewModel : INotifyPropertyChanged
     public string Summary { get; private set; } = "";
     public string Title => $"我的达成 · {Name}";
 
+    /// <summary>个人目标保存后触发（外壳据此即时把本人目标随包上云，跨设备"随人走"）。</summary>
+    public event Action? TargetSaved;
+
     public void Load()
     {
         var contracts = _store.GetContractsFor(Name);
-        var t = _store.GetPersonTarget(_personCode, _year);
+        var t = _store.GetPersonTarget(Name, _year);
         _rev = t != null ? Money.ToWan(t.RevenueTargetCents) : 0;
         _profit = t != null ? Money.ToWan(t.ProfitTargetCents) : 0;
         _cost = t != null ? Money.ToWan(t.CostCeilingCents) : 0;
@@ -52,10 +55,11 @@ public sealed class MyAchievementViewModel : INotifyPropertyChanged
 
     public void SaveTarget()
     {
-        _store.SavePersonTarget(_personCode, _year,
+        _store.SavePersonTarget(Name, _year,
             Money.FromWan((double)_rev), Money.FromWan((double)_profit), Money.FromWan((double)_cost), Name);
         _store.WriteAudit("Target", Name, "Target", $"设置个人目标 收入{_rev}万/利润{_profit}万/成本上限{_cost}万");
         Load();
+        TargetSaved?.Invoke();
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;

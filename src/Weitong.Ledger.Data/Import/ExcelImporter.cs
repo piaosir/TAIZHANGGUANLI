@@ -22,13 +22,14 @@ public sealed class ExcelImporter
     private static bool IsLedgerSheet(string name) =>
         name.Contains("合同台账") || name.Contains("台账");
 
-    public ImportResult ImportFile(string path, DateTime importTimeUtc, string importedBy)
+    public ImportResult ImportFile(string path, DateTime importTimeUtc, string importedBy, IReadOnlyCollection<string>? sheets = null)
     {
         using var fs = File.OpenRead(path);
-        return Import(fs, importTimeUtc, importedBy);
+        return Import(fs, importTimeUtc, importedBy, sheets);
     }
 
-    public ImportResult Import(Stream stream, DateTime importTimeUtc, string importedBy)
+    /// <param name="sheets">null=导入全部台账分表；否则只导入名字在此集合里的分表（按团队只导本团队那部分）。</param>
+    public ImportResult Import(Stream stream, DateTime importTimeUtc, string importedBy, IReadOnlyCollection<string>? sheets = null)
     {
         var result = new ImportResult();
         IWorkbook wb = new XSSFWorkbook(stream);
@@ -37,9 +38,24 @@ public sealed class ExcelImporter
         {
             var sheet = wb.GetSheetAt(si);
             if (!IsLedgerSheet(sheet.SheetName)) continue;
+            if (sheets != null && !sheets.Contains(sheet.SheetName)) continue;   // 只导入选中的分表
             ImportSheet(sheet, result, importTimeUtc, importedBy);
         }
         return result;
+    }
+
+    /// <summary>列出文件里可导入的台账分表名（供导入时按团队选择只导本团队那部分）。</summary>
+    public List<string> ListLedgerSheets(string path)
+    {
+        using var fs = File.OpenRead(path);
+        IWorkbook wb = new XSSFWorkbook(fs);
+        var names = new List<string>();
+        for (int i = 0; i < wb.NumberOfSheets; i++)
+        {
+            var n = wb.GetSheetAt(i).SheetName;
+            if (IsLedgerSheet(n)) names.Add(n);
+        }
+        return names;
     }
 
     private void ImportSheet(ISheet sheet, ImportResult result, DateTime now, string by)

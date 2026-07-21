@@ -43,6 +43,9 @@ public partial class MainWindow : Window
     private bool _syncing;
     private bool _syncQueued;
 
+    // 当前已打开团队库的令牌。后台同步回写前用它比对：同步期间若用户切了团队，作废旧团队那次结果，避免写错库。
+    private string _currentTeamToken = "";
+
     public MainWindow()
     {
         InitializeComponent();
@@ -74,26 +77,18 @@ public partial class MainWindow : Window
             }
         }
         _person = _config.PersonName ?? "未命名";
-        NavTeam.Text = _config.TeamName ?? "行业市场组";
-        IdentityText.Text = $"当前使用人：{_person} · {_config.TeamName}";
-
-        // 打开加密库；库为空则尝试从就近 xlsx 首次灌库
-        _store = new LedgerStore(Path.Combine(_dataDir, "data"));
-        if (_store.ContractCount() == 0)
-        {
-            var xlsx = FindLedgerFile();
-            if (xlsx != null)
-            {
-                var res = new ExcelImporter().ImportFile(xlsx, DateTime.UtcNow, _person);
-                _store.SeedFromImport(res, _person);
-                _store.WriteAudit("Seed", _person, "Contract", $"首次从 {Path.GetFileName(xlsx)} 灌库");
-            }
-        }
-        _store.WriteAudit("Open", _person, note: $"机器码 {MachineId.Short()}");
-        SeedTeamTargetIfNeeded();        // 老库升级：补一次 2026 历史团队指标，保证看板数字不变且可编辑
 
         _cos = CosSettings.Load();       // 后台 COS 配置（cos.json，销售无感知）
-        _roles = new RoleService(_cos);  // 按姓名判定管理员
+        _roles = new RoleService(_cos);  // 人员名册：姓名→团队→角色（判管理员 + 团队分权）
+
+        // 显示的团队以名册为准（管理员统一维护）；名册没有该人则回退到本机自填
+        NavTeam.Text = MyTeam ?? "行业市场组";
+        IdentityText.Text = $"当前使用人：{_person} · {MyTeam ?? _config.TeamName}";
+
+        // 一团队一库：把库开在「当前团队身份」对应的物理库上（不同团队互不打开对方的库）。
+        // 不再从内置 xlsx 自动灌库——那份 Excel 是多团队混合的，自动灌会把别团队数据倒进当前团队；
+        // 数据一律靠「当前团队身份」手动导入/录入进入本团队库（用户模型：以什么团队身份填就进哪个库）。
+        OpenTeamStore();
 
         _dashVm = new DashboardViewModel();
         BuildViews();
@@ -125,7 +120,7 @@ public partial class MainWindow : Window
         _pendingVm = new PendingReviewViewModel(_review);
         _pendingVm.Changed += OnReviewDecided;
 
-        _dashVm.TeamName = string.IsNullOrWhiteSpace(_config.TeamName) ? "行业市场组" : _config.TeamName!;
+        _dashVm.TeamName = MyTeam ?? "行业市场组";
         _overview = new OverviewView { DataContext = _dashVm };
         _overview.EditTargetRequested += OnEditTeamTarget;
         // 云端已配置时仅管理员可改（改动会同步全组）；未配置云同步时允许本机编辑（仅本机生效）
@@ -134,21 +129,33 @@ public partial class MainWindow : Window
         _browse = new LedgerBrowseView { DataContext = _browseVm };
         _pending = new PendingReviewView { DataContext = _pendingVm };
         _settings = new SettingsView(_config, OnIdentityChanged);
-        _myView = new MyAchievementView { DataContext = new MyAchievementViewModel(_store, personCode, _person, DateTime.Now.Year) };
+        var myVm = new MyAchievementViewModel(_store, _person, DateTime.Now.Year);
+        myVm.TargetSaved += SchedulePush;   // 个人目标改完即时随人上云（防抖合并）
+        _myView = new MyAchievementView { DataContext = myVm };
     }
 
     private SyncPayload BuildPayload()
     {
-        var contracts = _store.GetAllContractsForSync();   // 含墓碑：删除靠墓碑上云才能传播到其它设备
+        // 一团队一库：本地库本就是本团队的数据，整库上传即可（含墓碑：删除靠墓碑传播到本团队其它设备）
+        var contracts = _store.GetAllContractsForSync();
+        var pt = _store.GetPersonTarget(_person, DateTime.Now.Year);   // 本人个人目标随包上云（随人走）
         return new SyncPayload
         {
             PersonCode = _config.PersonCode ?? MachineId.Short(),
             PersonName = _person,
-            TeamName = _config.TeamName,
+            TeamName = MyTeam ?? _config.TeamName,          // 携带名册认定的团队，供各端按团队分权
             MachineCode = MachineId.Get(),
             ExportedUtc = DateTime.UtcNow,
             Count = contracts.Count(c => !c.IsDeleted),     // 展示用条数只算存活记录
             Contracts = contracts,
+            PersonalTarget = pt == null ? null : new PersonTargetDto
+            {
+                Year = pt.Year,
+                RevenueTargetCents = pt.RevenueTargetCents,
+                ProfitTargetCents = pt.ProfitTargetCents,
+                CostCeilingCents = pt.CostCeilingCents,
+                UpdatedUtc = AsUtc(pt.UpdatedAt),
+            },
         };
     }
 
@@ -163,12 +170,14 @@ public partial class MainWindow : Window
         var reviewBundle = _review.BuildOutgoingBundle();   // UI 线程（读库）
         var decisionBundle = _review.BuildDecisionBundle(); // UI 线程（读库）
         bool isAdmin = _review.IsAdmin;
+        var teamKey = TeamKey;                              // 本团队键（后台线程用，先在 UI 线程取好）
+        var syncTeamToken = TeamPartition.Token(teamKey);   // 本次同步归属的团队；回写前比对，防切团队后写错库
         var cos = _cos;
         _ = Task.Run(() =>
         {
             try
             {
-                var client = new CloudSync(cos);
+                var client = new CloudSync(cos, teamKey);   // 本团队分区的客户端：只读写本团队前缀
                 try   // 上传失败（限流/瞬时错误）不应阻断下面的拉取
                 {
                     client.UploadMine(payload);
@@ -176,21 +185,28 @@ public partial class MainWindow : Window
                     if (decisionBundle.Decisions.Count > 0) client.UploadDecisions(decisionBundle);
                 }
                 catch { /* 下次刷新会重试上传 */ }
-                var (merged, payloads) = client.DownloadAll();
+                var (merged, payloads) = client.DownloadAll();   // 只会拉到本团队分区里的成员（物理隔离）
                 var reviews = client.DownloadReviews();
                 var decisions = client.DownloadDecisions();
-                var teamTargets = client.DownloadTeamTargets();   // 全组统一的团队目标（可能为 null）
+                var teamTargets = client.DownloadTeamTargets();   // 本团队的团队目标（可能为 null）
                 Dispatcher.Invoke(() =>
                 {
+                    if (syncTeamToken != _currentTeamToken) return;   // 同步期间用户切了团队：本次(旧团队)结果作废，绝不写进新团队库
                     _review.Ingest(reviews, decisions);      // 写库在 UI 线程
-                    _store.ApplyMergedFromCloud(merged, "云端合并"); // 合并结果(含墓碑)回写本地库：删除生效并收敛，下次不再广播旧值
+                    _store.ApplyMergedFromCloud(merged, "云端合并"); // 本团队库回写(含墓碑)：删除生效并收敛，下次不再广播旧值
+                    // 个人目标随人走：每人回填自己的（管理员回填本团队全员，便于将来按人汇总），LWW 裁决
+                    foreach (var pl in payloads)
+                        if (pl.PersonalTarget is { } ptt && !string.IsNullOrWhiteSpace(pl.PersonName)
+                            && (isAdmin || string.Equals(pl.PersonName.Trim(), _person.Trim(), StringComparison.Ordinal)))
+                            _store.ApplyDownloadedPersonTarget(pl.PersonName.Trim(), ptt.Year,
+                                ptt.RevenueTargetCents, ptt.ProfitTargetCents, ptt.CostCeilingCents, AsUtc(ptt.UpdatedUtc), "云端同步");
                     var live = merged.Where(c => !c.IsDeleted).ToList(); // 展示只取存活记录，墓碑不显示
                     if (teamTargets != null) ApplyDownloadedTeamTargets(teamTargets); // 落本地库（按时间裁决）
                     MaybeReuploadTeamTargets(teamTargets);   // 管理员：本地更新则补传，自愈失败的上传
-                    _dashVm.Load(live, $"全组 · {payloads.Count} 名成员");
+                    _dashVm.Load(live, TeamLabel(live.Count));
                     ApplyTeamTarget();                       // 套用（云端有则用云端，否则用本地/种子）
-                    _browseVm.LoadFrom(live);                // 台账明细 = 云端合并的全组总库
-                    StatusBar.Text = $"使用人 {_person} · 全组 {live.Count} 条";
+                    _browseVm.LoadFrom(live);                // 台账明细 = 本团队总库
+                    StatusBar.Text = $"使用人 {_person} · {MyTeam ?? "本组"} {live.Count} 条";
                     UpdateBadge();
                     _pendingVm.Load();
                     _lastSyncAt = DateTime.Now;   // 数据新鲜度：右上角显示「同步于 HH:mm」
@@ -220,12 +236,13 @@ public partial class MainWindow : Window
         var payload = BuildPayload();
         var reviewBundle = _review.BuildOutgoingBundle();
         bool isAdmin = _review.IsAdmin;
+        var team = TeamKey;
         var cos = _cos;
         _ = Task.Run(() =>
         {
             try
             {
-                var client = new CloudSync(cos);
+                var client = new CloudSync(cos, team);
                 client.UploadMine(payload);
                 if (isAdmin) client.UploadReview(reviewBundle);   // 仅管理员上传提案文件（销售端上传空提案无意义）
             }
@@ -323,12 +340,15 @@ public partial class MainWindow : Window
 
     private void OnIdentityChanged(string name, string team)
     {
+        // SettingsView 已把 _config.TeamName 更新为新团队，故 MyTeam 反映的是切换后的团队
         _person = name;
-        NavTeam.Text = team;
-        IdentityText.Text = $"当前使用人：{name} · {team}";
-        BuildViews();          // 用新姓名重建各页（含重判管理员身份）
+        NavTeam.Text = MyTeam ?? "行业市场组";
+        IdentityText.Text = $"当前使用人：{name} · {MyTeam ?? team}";
+        OpenTeamStore();       // 团队身份可能变了 → 切换到该团队的物理库（一团队一库，这正是"切团队没换库"的修复）
+        BuildViews();          // 各 VM 引用新 _store，并按新姓名重判管理员
         ReloadAll();
         UpdateBadge();
+        SyncInBackground();    // 拉本团队云端最新
         NavOverview.IsChecked = true;
     }
 
@@ -364,15 +384,16 @@ public partial class MainWindow : Window
         }
 
         // 以下只操作内存集合 / 绑定属性，均在 UI 线程执行（不再碰库）
-        _dashVm.Load(snap.Contracts, "本机数据");
+        // 本地库即本团队总库（物理隔离），直接展示，无需再按团队过滤
+        _dashVm.Load(snap.Contracts, TeamLabel(snap.Contracts.Count));
         _dashVm.ApplyTarget(snap.TeamTarget?.RevenueTargetCents ?? 0,   // 按 团队×当前年 套用目标（否则显示"未设"）
                             snap.TeamTarget?.ProfitTargetCents ?? 0,
                             snap.TeamTarget?.CostCeilingCents ?? 0);
-        _browseVm.LoadFrom(snap.Contracts);   // 台账明细=总库（同步后由云端合并覆盖）
-        _entryVm.LoadFrom(snap.Entry);        // 个人录入=我的
+        _browseVm.LoadFrom(snap.Contracts);   // 台账明细 = 本团队总库
+        _entryVm.LoadFrom(snap.Entry);        // 个人录入 = 我的
         _pendingVm.Apply(snap.Incoming, snap.Outgoing);
         SetBadge(snap.Badge);
-        StatusBar.Text = $"使用人 {_person} · 共 {snap.Contracts.Count} 条";
+        StatusBar.Text = $"使用人 {_person} · {MyTeam ?? "本组"} {snap.Contracts.Count} 条";
     }
 
     private void OnNav(object sender, RoutedEventArgs e)
@@ -429,8 +450,17 @@ public partial class MainWindow : Window
     /// <summary>迁移种子的基准时间：足够旧，保证任何真实编辑（本机或云端）都能盖过它。</summary>
     private static readonly DateTime MigrationBaselineUtc = new(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc);
 
-    /// <summary>团队目标的归属键（团队名，空则默认）。</summary>
-    private string TeamKey => string.IsNullOrWhiteSpace(_config.TeamName) ? "行业市场组" : _config.TeamName!.Trim();
+    /// <summary>
+    /// 当前使用人「当前填报身份」的团队（自填、可在设置里切换）。决定用哪一个物理库 / 哪一个 COS 前缀。
+    /// 用户模型：以什么团队身份填，数据就进那个团队的库；同一个人可切换团队、可跨多个团队。null=未填。
+    /// </summary>
+    private string? MyTeam => string.IsNullOrWhiteSpace(_config.TeamName) ? null : _config.TeamName!.Trim();
+
+    /// <summary>团队目标 / 分权用的团队键（有效团队，空则默认行业市场组）。</summary>
+    private string TeamKey => MyTeam ?? "行业市场组";
+
+    /// <summary>达成总览副标题：本团队名 + 条数（一团队一库，不存在跨团队全貌）。</summary>
+    private string TeamLabel(int shownCount) => $"{MyTeam ?? "本组"} · {shownCount} 条";
 
     private static DateTime AsUtc(DateTime dt) => DateTime.SpecifyKind(dt, DateTimeKind.Utc);
 
@@ -496,13 +526,15 @@ public partial class MainWindow : Window
             }).ToList(),
         };
         var cos = _cos;
-        _ = Task.Run(() => { try { new CloudSync(cos).UploadTeamTargets(bundle); } catch { /* 失败：下次同步 MaybeReuploadTeamTargets 会补传 */ } });
+        _ = Task.Run(() => { try { new CloudSync(cos, team).UploadTeamTargets(bundle); } catch { /* 失败：下次同步 MaybeReuploadTeamTargets 会补传 */ } });
     }
 
     /// <summary>把云端下载的团队目标落本地库：仅当云端某年度<b>更新</b>（或本地尚无）才覆盖，
     /// 本地更新的编辑保留不动，避免旧云值回滚管理员刚改、尚未上传成功的新值。</summary>
     private void ApplyDownloadedTeamTargets(TeamTargetBundle b)
     {
+        // 只接受本团队的目标包（多团队时防止别组目标被套到本组）
+        if (!string.IsNullOrWhiteSpace(b.TeamName) && !string.Equals(b.TeamName.Trim(), TeamKey, StringComparison.Ordinal)) return;
         foreach (var en in b.Entries)
         {
             var local = _store.GetTeamTarget(TeamKey, en.Year);
@@ -523,17 +555,49 @@ public partial class MainWindow : Window
         if (localMax > cloudMax) UploadTeamTargetsInBackground();
     }
 
-    private static string? FindLedgerFile()
+    /// <summary>打开「当前团队身份」对应的物理库（切换团队时先释放旧库再开新库），并补团队目标种子 + 迁移个人目标键。
+    /// 不做合同灌库——数据靠手动导入/录入按团队进入。</summary>
+    private void OpenTeamStore()
     {
-        bool IsLedger(string f) => !Path.GetFileName(f).StartsWith("~$") &&
-                                   Path.GetExtension(f).Equals(".xlsx", StringComparison.OrdinalIgnoreCase);
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir != null)
-        {
-            var hit = dir.EnumerateFiles("*.xlsx").FirstOrDefault(f => IsLedger(f.FullName));
-            if (hit != null) return hit.FullName;
-            dir = dir.Parent;
-        }
-        return null;
+        _store?.Dispose();
+        _store = new LedgerStore(ResolveTeamDataDir());
+        _currentTeamToken = TeamPartition.Token(TeamKey);   // 记录当前团队库，供后台同步回写时比对
+        _store.WriteAudit("Open", _person, note: $"团队 {MyTeam} · 机器码 {MachineId.Short()}");
+        SeedTeamTargetIfNeeded();        // 仅行业团队补 2026 历史团队指标（看板数字不变、可编辑）
+        _store.MigratePersonTargetKey(_config.PersonCode ?? MachineId.Short(), _person, DateTime.Now.Year);
     }
+
+    /// <summary>
+    /// 一团队一库：返回本团队的本地库目录（data/&lt;团队令牌&gt;/）。首次运行把老的单一库
+    /// (data/ledger.db + db.key) <b>复制</b>进<b>行业团队</b>目录（老库数据本属行业市场组），保证升级不丢历史数据
+    /// （老库原地保留作备份，不删）。别的团队不迁移、保持空。迁移异常则回退老目录并记 startup-error.log。
+    /// </summary>
+    private string ResolveTeamDataDir()
+    {
+        var legacyDir = Path.Combine(_dataDir, "data");
+        // 用 TeamKey（与云端前缀、团队目标同一口径）算令牌，保证本地库目录与 COS 前缀始终对齐
+        var teamDir = Path.Combine(legacyDir, TeamPartition.Token(TeamKey));
+        try
+        {
+            Directory.CreateDirectory(teamDir);
+            var teamDb = Path.Combine(teamDir, "ledger.db");
+            var legacyDb = Path.Combine(legacyDir, "ledger.db");
+            // 仅「行业」团队继承老单一库(其数据本属行业市场组)：团队库尚不存在、老单一库在 → 复制迁移
+            // （先拷密钥与可能的 WAL 边车，主库最后拷，保证 teamDb 存在=迁移完成）。别的团队保持空。
+            if (TeamKey.Contains("行业") && !File.Exists(teamDb) && File.Exists(legacyDb) && File.Exists(Path.Combine(legacyDir, "db.key")))
+            {
+                File.Copy(Path.Combine(legacyDir, "db.key"), Path.Combine(teamDir, "db.key"), overwrite: true);
+                foreach (var suffix in new[] { "-wal", "-shm" })
+                    if (File.Exists(legacyDb + suffix)) File.Copy(legacyDb + suffix, teamDb + suffix, overwrite: true);
+                File.Copy(legacyDb, teamDb, overwrite: true);
+            }
+            return teamDir;
+        }
+        catch (Exception ex)
+        {
+            try { File.AppendAllText(Path.Combine(_dataDir, "startup-error.log"), $"{DateTime.Now:s} 团队库迁移失败，回退单库：{ex}\n"); } catch { }
+            return legacyDir;   // 迁移异常：回退老目录，保证数据可用（降级为单库）
+        }
+    }
+
 }

@@ -21,6 +21,19 @@ public sealed class SyncPayload
     public DateTime ExportedUtc { get; set; }
     public int Count { get; set; }
     public List<Contract> Contracts { get; set; } = new();
+    /// <summary>本人当年个人目标（随同步包"随人走"：按姓名落库到各端，LWW 裁决）。null=未设。</summary>
+    public PersonTargetDto? PersonalTarget { get; set; }
+}
+
+/// <summary>个人年度目标同步载荷（金额为「分」）。</summary>
+public sealed class PersonTargetDto
+{
+    public int Year { get; set; }
+    public long RevenueTargetCents { get; set; }
+    public long ProfitTargetCents { get; set; }
+    public long CostCeilingCents { get; set; }
+    /// <summary>该目标最后编辑时间（UTC），用于「谁更新用谁」裁决。</summary>
+    public DateTime UpdatedUtc { get; set; }
 }
 
 public sealed record PeerInfo(string PersonCode, DateTime? LastModifiedUtc, long SizeBytes);

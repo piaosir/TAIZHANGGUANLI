@@ -20,6 +20,13 @@ public sealed class CosSettings
     /// <summary>管理员名单：姓名在此列表中的使用人即为管理员（可在 cos.json 调整）。</summary>
     public List<string> AdminNames { get; set; } = new() { "丁晖", "李偲", "张磊", "朴东旭", "刘依婷" };
 
+    /// <summary>
+    /// 人员名册：姓名→团队→角色。台账明细/达成总览按此「所属团队」分权：同组可见本组全部、跨组屏蔽、管理员/领导看全部。
+    /// 由管理员在 cos.json 统一维护、随软件下发。<b>名册为空则不启用团队分权（全部可见），仅按 AdminNames 判管理员——向后兼容。</b>
+    /// Role 取值：sales(普通成员) / manager(组长) / admin(管理员·领导，看全部)。
+    /// </summary>
+    public List<RosterMember> Roster { get; set; } = new();
+
     private const string Placeholder = "在这里填写";
 
     [System.Text.Json.Serialization.JsonIgnore]
@@ -66,6 +73,11 @@ public sealed class CosSettings
             SecretId = "在这里填写你的SecretId",
             SecretKey = "在这里填写你的SecretKey",
             TeamKey = "在这里填写团队同步口令（全队一致，自定义一句话）",
+            Roster = new()
+            {
+                new RosterMember { Name = "朴东旭", Team = "行业市场组", Role = "admin" },
+                new RosterMember { Name = "乜学郁", Team = "行业市场组", Role = "sales" },
+            },
         };
         TryWrite(FilePath, template);
         return template;
@@ -86,4 +98,13 @@ public sealed class CosSettings
         }
         catch { /* 只读目录等失败可忽略：另一处仍可用 */ }
     }
+}
+
+/// <summary>名册一名成员：姓名、所属团队、角色（sales/manager/admin）。</summary>
+public sealed class RosterMember
+{
+    public string Name { get; set; } = "";
+    public string Team { get; set; } = "";
+    /// <summary>sales(普通成员) / manager(组长) / admin(管理员·领导，看全部)。</summary>
+    public string Role { get; set; } = "sales";
 }

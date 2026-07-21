@@ -21,6 +21,20 @@ public sealed class LedgerStore : IDisposable
     // 复用它，不再重跑 PRAGMA key 的 25.6 万次 PBKDF2 迭代。这正是「启动慢 + 编辑/撤销/翻页卡」的根因。
     private readonly Microsoft.Data.Sqlite.SqliteConnection _keepAlive;
 
+    // 进程内写库串行锁。本 App 里「后台云同步回写(经 Dispatcher 在 UI 线程)」与「手动导入/编辑(在 Task.Run 后台线程)」
+    // 会并发写同一加密库；SQLite 在默认回滚日志模式下会抛 "database is locked" —— 这正是「离线点导入弹红色
+    // 失败框」的真正根因（导入链路本身不联网，是并发写库撞锁）。所有会写库的方法进入前先取此锁，保证全程单写者。
+    private readonly object _writeLock = new();
+    private WriteScope WriteGate() => new(_writeLock);
+
+    /// <summary>using 作用域内持有写锁；Monitor 可重入，同线程嵌套安全。</summary>
+    private readonly struct WriteScope : IDisposable
+    {
+        private readonly object _gate;
+        public WriteScope(object gate) { _gate = gate; System.Threading.Monitor.Enter(_gate); }
+        public void Dispose() => System.Threading.Monitor.Exit(_gate);
+    }
+
     static LedgerStore() => SQLitePCL.Batteries_V2.Init();
 
     public LedgerStore(string dataDir)
@@ -36,6 +50,14 @@ public sealed class LedgerStore : IDisposable
         }
         _keepAlive = new Microsoft.Data.Sqlite.SqliteConnection(_connString);
         _keepAlive.Open();          // 常开，保证连接池不被清空、KDF 只在此刻跑一次
+        // 开启 WAL：读写并发不再互相阻塞（后台同步回写 与 前台导入/编辑可并存），配合上面的写锁根治
+        // "database is locked"。busy_timeout 兜底：偶发忙时短暂等待而非立刻抛错。WAL 状态写入库头，
+        // 后续所有连接自动沿用；SQLCipher 兼容 WAL（-wal 文件同样加密）。
+        using (var pragma = _keepAlive.CreateCommand())
+        {
+            pragma.CommandText = "PRAGMA journal_mode=WAL; PRAGMA busy_timeout=8000; PRAGMA synchronous=NORMAL;";
+            pragma.ExecuteNonQuery();
+        }
     }
 
     public void Dispose() => _keepAlive.Dispose();
@@ -121,6 +143,7 @@ CREATE TABLE IF NOT EXISTS ""ReviewItems"" (
     /// <summary>首次把导入结果灌库；按 ContractUid 幂等，可重复调用不重复入库。</summary>
     public SeedResult SeedFromImport(ImportResult import, string by)
     {
+        using var _g = WriteGate();
         using var ctx = CreateContext();
         var existing = ctx.Contracts.IgnoreQueryFilters().Select(c => c.ContractUid).ToHashSet();
 
@@ -168,6 +191,7 @@ CREATE TABLE IF NOT EXISTS ""ReviewItems"" (
     /// </summary>
     public int ApplyMergedFromCloud(IEnumerable<Contract> rows, string by)
     {
+        using var _g = WriteGate();
         using var ctx = CreateContext();
         // 预载全部既有行(含墓碑)到内存，避免逐条查库的 N 次往返。
         var existing = ctx.Contracts.IgnoreQueryFilters().Include(c => c.Payments)
@@ -217,6 +241,7 @@ CREATE TABLE IF NOT EXISTS ""ReviewItems"" (
         var list = rows as IReadOnlyList<Contract> ?? rows.ToList();
         if (list.Count == 0) return 0;
 
+        using var _g = WriteGate();
         using var ctx = CreateContext();
         var now = DateTime.UtcNow;
 
@@ -270,6 +295,7 @@ CREATE TABLE IF NOT EXISTS ""ReviewItems"" (
     /// <summary>软删除（置 IsDeleted，不物理删，符合国企审计）。</summary>
     public int SoftDeleteContracts(IEnumerable<long> ids, string by)
     {
+        using var _g = WriteGate();
         using var ctx = CreateContext();
         int n = 0;
         foreach (var id in ids)
@@ -290,6 +316,7 @@ CREATE TABLE IF NOT EXISTS ""ReviewItems"" (
 
     public void SavePersonTarget(string ownerKey, int year, long revenueCents, long profitCents, long costCeilingCents, string by)
     {
+        using var _g = WriteGate();
         using var ctx = CreateContext();
         var t = ctx.Targets.FirstOrDefault(x => x.OwnerType == "sales" && x.OwnerKey == ownerKey && x.Year == year);
         if (t == null)
@@ -301,6 +328,48 @@ CREATE TABLE IF NOT EXISTS ""ReviewItems"" (
         t.ProfitTargetCents = profitCents;
         t.CostCeilingCents = costCeilingCents;
         t.UpdatedAt = DateTime.UtcNow; t.UpdatedBy = by; t.RowVersion++;
+        ctx.SaveChanges();
+    }
+
+    /// <summary>
+    /// 迁移旧「按机器码存」的个人目标到「按姓名存」：当姓名键下尚无该年目标、而机器码键下有时，复制过去。
+    /// 一次性、幂等（新键已存在则不动）。修复「换台电脑目标就变、且从不上云」的老 bug。返回是否发生迁移。
+    /// </summary>
+    public bool MigratePersonTargetKey(string oldKey, string newName, int year)
+    {
+        if (string.IsNullOrWhiteSpace(oldKey) || string.IsNullOrWhiteSpace(newName) || oldKey == newName) return false;
+        using var _g = WriteGate();
+        using var ctx = CreateContext();
+        bool hasNew = ctx.Targets.Any(t => t.OwnerType == "sales" && t.OwnerKey == newName && t.Year == year);
+        if (hasNew) return false;
+        var old = ctx.Targets.FirstOrDefault(t => t.OwnerType == "sales" && t.OwnerKey == oldKey && t.Year == year);
+        if (old == null) return false;
+        ctx.Targets.Add(new Target
+        {
+            OwnerType = "sales", OwnerKey = newName, Year = year,
+            RevenueTargetCents = old.RevenueTargetCents, ProfitTargetCents = old.ProfitTargetCents, CostCeilingCents = old.CostCeilingCents,
+            CreatedAt = old.CreatedAt == default ? DateTime.UtcNow : old.CreatedAt, CreatedBy = old.CreatedBy,
+            UpdatedAt = old.UpdatedAt == default ? DateTime.UtcNow : old.UpdatedAt, UpdatedBy = old.UpdatedBy, RowVersion = old.RowVersion,
+        });
+        ctx.SaveChanges();
+        return true;
+    }
+
+    /// <summary>落库云端下发的个人目标（按姓名键，LWW：仅当云端更新、或本地尚无，才覆盖，不回滚本机更晚的编辑）。</summary>
+    public void ApplyDownloadedPersonTarget(string name, int year, long revenueCents, long profitCents, long costCeilingCents, DateTime updatedUtc, string by)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return;
+        using var _g = WriteGate();
+        using var ctx = CreateContext();
+        var t = ctx.Targets.FirstOrDefault(x => x.OwnerType == "sales" && x.OwnerKey == name && x.Year == year);
+        if (t != null && DateTime.SpecifyKind(t.UpdatedAt, DateTimeKind.Utc) >= updatedUtc) return; // 本地不更旧→保留
+        if (t == null)
+        {
+            t = new Target { OwnerType = "sales", OwnerKey = name, Year = year, CreatedAt = DateTime.UtcNow, CreatedBy = by, RowVersion = 0 };
+            ctx.Targets.Add(t);
+        }
+        t.RevenueTargetCents = revenueCents; t.ProfitTargetCents = profitCents; t.CostCeilingCents = costCeilingCents;
+        t.UpdatedAt = updatedUtc == default ? DateTime.UtcNow : updatedUtc; t.UpdatedBy = by; t.RowVersion++;
         ctx.SaveChanges();
     }
 
@@ -324,6 +393,7 @@ CREATE TABLE IF NOT EXISTS ""ReviewItems"" (
     /// 传 null 表示本机此刻编辑，取 UtcNow。</summary>
     public void SaveTeamTarget(string teamKey, int year, long revenueCents, long profitCents, long costCeilingCents, string by, DateTime? updatedAtUtc = null)
     {
+        using var _g = WriteGate();
         using var ctx = CreateContext();
         var t = ctx.Targets.FirstOrDefault(x => x.OwnerType == "team" && x.OwnerKey == teamKey && x.Year == year);
         if (t == null)
@@ -341,6 +411,7 @@ CREATE TABLE IF NOT EXISTS ""ReviewItems"" (
     /// <summary>按 ContractUid 落库一条合同（忽略外来 Id，避免跨机 Id 冲突）。用于确认管理员提案。</summary>
     public void UpsertContractByUid(Contract c, string by)
     {
+        using var _g = WriteGate();
         using var ctx = CreateContext();
         var e = ctx.Contracts.IgnoreQueryFilters().Include(x => x.Payments)
                    .FirstOrDefault(x => x.ContractUid == c.ContractUid);
@@ -370,6 +441,7 @@ CREATE TABLE IF NOT EXISTS ""ReviewItems"" (
     /// <summary>按 ContractUid 软删除。用于确认管理员的删除提案。</summary>
     public void SoftDeleteByUid(string uid, string by)
     {
+        using var _g = WriteGate();
         using var ctx = CreateContext();
         var e = ctx.Contracts.FirstOrDefault(x => x.ContractUid == uid);
         if (e != null) { e.IsDeleted = true; e.UpdatedBy = by; e.UpdatedAt = DateTime.UtcNow; e.RowVersion++; ctx.SaveChanges(); }
@@ -380,6 +452,7 @@ CREATE TABLE IF NOT EXISTS ""ReviewItems"" (
     /// <summary>本机新建/更新一条审批项（管理员发起时用）。按 OpId 幂等。</summary>
     public void SaveReviewItem(ReviewItem item)
     {
+        using var _g = WriteGate();
         using var ctx = CreateContext();
         var e = ctx.ReviewItems.FirstOrDefault(x => x.OpId == item.OpId);
         if (e == null) { item.Id = 0; ctx.ReviewItems.Add(item); }
@@ -390,6 +463,7 @@ CREATE TABLE IF NOT EXISTS ""ReviewItems"" (
     /// <summary>合并云端拉来的审批项：按 OpId 去重；不把已决策项回退成待办。</summary>
     public int IngestReviewItems(IEnumerable<ReviewItem> items)
     {
+        using var _g = WriteGate();
         using var ctx = CreateContext();
         var byOp = ctx.ReviewItems.ToDictionary(x => x.OpId);
         int n = 0;
@@ -418,6 +492,7 @@ CREATE TABLE IF NOT EXISTS ""ReviewItems"" (
     /// <summary>合并回流的决策：更新对应审批项的状态（管理员看到结果）。返回被应用为"确认执行"的项。</summary>
     public List<ReviewItem> IngestDecisions(IEnumerable<ReviewDecision> decisions)
     {
+        using var _g = WriteGate();
         using var ctx = CreateContext();
         var byOp = ctx.ReviewItems.ToDictionary(x => x.OpId);
         var newlyConfirmed = new List<ReviewItem>();
@@ -464,6 +539,7 @@ CREATE TABLE IF NOT EXISTS ""ReviewItems"" (
     /// <summary>发起方撤回一条尚未处理的审批项（仅待办可撤回）。</summary>
     public bool WithdrawReviewItem(string opId, string byName)
     {
+        using var _g = WriteGate();
         using var ctx = CreateContext();
         var e = ctx.ReviewItems.FirstOrDefault(x => x.OpId == opId && x.ByName == byName);
         if (e == null || e.Status != ReviewStatus.Pending) return false;
@@ -484,6 +560,7 @@ CREATE TABLE IF NOT EXISTS ""ReviewItems"" (
     public int ClearOutgoing(IReadOnlyList<string> opIds, string byName)
     {
         if (opIds.Count == 0) return 0;
+        using var _g = WriteGate();
         using var ctx = CreateContext();
         var rows = ctx.ReviewItems
             .Where(x => x.ByName == byName && !x.ClearedByOwner && opIds.Contains(x.OpId))
@@ -526,6 +603,7 @@ CREATE TABLE IF NOT EXISTS ""ReviewItems"" (
     /// <summary>销售对某审批项作出决策（本机记录，待上云回流给管理员）。</summary>
     public void SetReviewDecision(string opId, ReviewStatus status, string? note)
     {
+        using var _g = WriteGate();
         using var ctx = CreateContext();
         var e = ctx.ReviewItems.FirstOrDefault(x => x.OpId == opId);
         if (e == null) return;
@@ -545,6 +623,7 @@ CREATE TABLE IF NOT EXISTS ""ReviewItems"" (
 
     public void WriteAudit(string action, string? by, string? entity = null, string? note = null)
     {
+        using var _g = WriteGate();
         using var ctx = CreateContext();
         ctx.AuditLogs.Add(new AuditLog
         {

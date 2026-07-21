@@ -280,9 +280,9 @@ public sealed class LedgerGridViewModel : INotifyPropertyChanged
     /// 因此可安全放到 Task.Run 里跑，避免解析/写库把 UI 线程卡住（导入卡死的直接原因）。
     /// 拿到结果后再由调用方在 UI 线程调用 <see cref="LoadFrom"/> 刷新表格。
     /// </summary>
-    public ImportOutcome ImportExcelToStore(string path, Weitong.Ledger.Data.Import.ImportMode mode)
+    public ImportOutcome ImportExcelToStore(string path, Weitong.Ledger.Data.Import.ImportMode mode, IReadOnlyCollection<string>? sheets = null)
     {
-        var res = new Weitong.Ledger.Data.Import.ExcelImporter().ImportFile(path, DateTime.UtcNow, _currentPerson);
+        var res = new Weitong.Ledger.Data.Import.ExcelImporter().ImportFile(path, DateTime.UtcNow, _currentPerson, sheets);
 
         // 「添加为新记录」：给每行换一个全新唯一键，使其在 UpsertContracts 里一律走 INSERT，
         // 绝不与库中已有的「工作表#行号」撞键覆盖。「覆盖现有」则保留原键，命中即更新（幂等重导入）。

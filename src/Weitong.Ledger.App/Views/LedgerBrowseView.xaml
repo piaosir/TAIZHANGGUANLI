@@ -20,8 +20,8 @@
     </Grid.RowDefinitions>
 
     <StackPanel Grid.Row="0" Margin="0,0,0,10">
-      <TextBlock x:Name="TitleText" Text="台账明细 · 全组总库" FontSize="18" FontWeight="Bold" Foreground="{StaticResource B.TextPrimary}"/>
-      <TextBlock x:Name="HintText" Text="全组所有合同数据。点每列表头的漏斗图标可像 Excel 一样按列筛选（勾选值、搜索、升降序）；右上角可全字段搜索；支持导入、导出为标准 Excel。"
+      <TextBlock x:Name="TitleText" Text="台账明细" FontSize="18" FontWeight="Bold" Foreground="{StaticResource B.TextPrimary}"/>
+      <TextBlock x:Name="HintText" Text="本团队台账（一个团队一个独立数据库，跨团队互不可见）。点每列表头的漏斗图标可像 Excel 一样按列筛选；右上角可全字段搜索；可导出为标准 Excel。"
                  Style="{StaticResource SectionHint}" Margin="0,4,0,0" TextWrapping="Wrap"/>
     </StackPanel>
 
@@ -37,7 +37,9 @@
         <Separator x:Name="Sep1" DockPanel.Dock="Left" Margin="4,4" Background="{StaticResource B.Hairline}"
                    Visibility="{Binding IsAdminReview, Converter={StaticResource BoolVis}}"/>
 
-        <Button DockPanel.Dock="Left" Content="导入 Excel" Click="OnImport" Style="{StaticResource GridToolBtn}"/>
+        <!-- 导入=向共享总库批量写入，限管理员；否则普通成员会把别组数据写进本机并上云污染 -->
+        <Button DockPanel.Dock="Left" Content="导入 Excel" Click="OnImport" Style="{StaticResource GridToolBtn}"
+                Visibility="{Binding IsAdminReview, Converter={StaticResource BoolVis}}"/>
         <Button DockPanel.Dock="Left" Content="导出 Excel" Click="OnExport" Style="{StaticResource GridToolBtn}"/>
         <TextBox DockPanel.Dock="Right" Width="240" VerticalAlignment="Center" Padding="6,4"
                  Text="{Binding Filter, UpdateSourceTrigger=PropertyChanged, Delay=200}" ToolTip="全字段搜索"/>

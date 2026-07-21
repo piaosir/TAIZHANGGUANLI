@@ -25,8 +25,8 @@ public partial class LedgerBrowseView : UserControl
             _hooked.ActionMessage += OnActionMessage;
             if (_hooked.IsAdminReview)
             {
-                TitleText.Text = "台账明细 · 全组总库（管理员可编辑）";
-                HintText.Text = "管理员：可直接在表格中增删改，改动立即生效。改他人名下的记录会同时在『通知』里告知对应销售（无需其确认）。选中行可『标记复核』提醒对方。";
+                TitleText.Text = "台账明细 · 本团队总库（管理员可编辑）";
+                HintText.Text = "本团队管理员：可直接在表格中增删改，改动立即生效。改本组他人名下的记录会同时在『通知』里告知对应销售（无需其确认）。选中行可『标记复核』提醒对方。（跨团队互不可见）";
             }
         }
     }
@@ -88,7 +88,16 @@ public partial class LedgerBrowseView : UserControl
 
         string path = dlg.FileName;
 
-        // 选完文件先问落库策略：覆盖现有（幂等更新）还是添加为新记录（一律追加不覆盖）。取消则不导入。
+        // 先列出该文件里的台账分表，让用户按团队只导本团队那部分（多分表时才弹选择框）。
+        // 这一步是关键：整份多团队 Excel 若整体导入当前团队，会把别团队的数据也倒进来。
+        List<string> sheets;
+        try { sheets = new Weitong.Ledger.Data.Import.ExcelImporter().ListLedgerSheets(path); }
+        catch (Exception ex) { MessageBox.Show("读取分表失败：\n" + ex.Message, "错误", MessageBoxButton.OK, MessageBoxImage.Error); return; }
+        if (sheets.Count == 0) { MessageBox.Show("这个文件里没有找到台账分表（分表名需包含\"台账\"）。", "提示", MessageBoxButton.OK, MessageBoxImage.Information); return; }
+        var chosen = SheetPickerDialog.Ask(Window.GetWindow(this), sheets);
+        if (chosen == null || chosen.Count == 0) return;
+
+        // 选完分表再问落库策略：覆盖现有（幂等更新）还是添加为新记录（一律追加不覆盖）。取消则不导入。
         var mode = ImportModeDialog.Ask(Window.GetWindow(this), path);
         if (mode == null) return;
 
@@ -98,7 +107,7 @@ public partial class LedgerBrowseView : UserControl
         {
             // 解析 + 落库放后台线程，避免卡住 UI 线程（导入卡死的直接原因）；
             // 拿到结果后回到 UI 线程刷新表格。
-            var outcome = await Task.Run(() => vm.ImportExcelToStore(path, mode.Value));
+            var outcome = await Task.Run(() => vm.ImportExcelToStore(path, mode.Value, chosen));
             vm.LoadFrom(outcome.Data);
             string modeText = mode == Weitong.Ledger.Data.Import.ImportMode.AppendNew ? "添加为新记录" : "覆盖现有";
             MessageBox.Show($"导入成功（{modeText}）：{outcome.Imported} 条已写入总库。\n数据质量提示：{outcome.Anomalies} 项（见导出的详细报告）。",

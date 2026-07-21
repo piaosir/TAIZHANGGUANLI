@@ -15,7 +15,12 @@ namespace Weitong.Ledger.App.Services;
 public sealed class CloudSync
 {
     private readonly CosSettings _s;
-    public CloudSync(CosSettings s) => _s = s;
+    private readonly string _teamPrefix;   // {Prefix}{团队令牌}/ —— 一团队一分区，跨团队在云端物理隔离
+    public CloudSync(CosSettings s, string team)
+    {
+        _s = s;
+        _teamPrefix = s.Prefix + TeamPartition.Token(team) + "/";
+    }
 
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
@@ -30,11 +35,12 @@ public sealed class CloudSync
         return new CosXmlServer(config, cred);
     }
 
-    private string KeyFor(string personCode) => _s.Prefix + personCode + "/latest.json";
-    private string ReviewPrefix => _s.Prefix + "_review/";
+    // 所有对象键都在本团队前缀 _teamPrefix 之下：别的团队用别的前缀，互不可见（含管理员）。
+    private string KeyFor(string personCode) => _teamPrefix + personCode + "/latest.json";
+    private string ReviewPrefix => _teamPrefix + "_review/";
     private string ReviewKey(string byCode) => ReviewPrefix + "by-" + byCode + ".json";
     private string DecisionKey(string byCode) => ReviewPrefix + "dec-" + byCode + ".json";
-    private string TeamTargetKey => _s.Prefix + "_team/targets.json"; // 全组共享的单一权威对象
+    private string TeamTargetKey => _teamPrefix + "_team/targets.json";
 
     private byte[] Protect(byte[] plain) =>
         _s.HasTeamKey ? TeamCrypto.Encrypt(plain, _s.TeamKey) : plain;
@@ -57,13 +63,13 @@ public sealed class CloudSync
     {
         var cos = Build();
         var req = new GetBucketRequest(_s.Bucket);
-        req.SetPrefix(_s.Prefix);
+        req.SetPrefix(_teamPrefix);        // 只列本团队分区下的成员文件
         var res = cos.GetBucket(req);
         var peers = new List<PeerInfo>();
         foreach (var c in res.listBucket.contentsList)
         {
             if (!c.key.EndsWith("/latest.json")) continue;
-            var personCode = c.key.Substring(_s.Prefix.Length).Split('/')[0];
+            var personCode = c.key.Substring(_teamPrefix.Length).Split('/')[0];
             DateTime? lm = DateTime.TryParse(c.lastModified, out var d) ? d.ToUniversalTime() : null;
             peers.Add(new PeerInfo(personCode, lm, c.size));
         }
@@ -151,7 +157,7 @@ public sealed class CloudSync
 
     // ————————— 团队目标（管理员统一设定，全组共享） —————————
 
-    /// <summary>上传团队年度目标（管理员）。云端单一对象，直接覆盖。</summary>
+    /// <summary>上传团队年度目标（管理员）。写在本团队前缀下，别的团队互不影响。</summary>
     public void UploadTeamTargets(TeamTargetBundle bundle)
     {
         var json = JsonSerializer.SerializeToUtf8Bytes(bundle, JsonOpts);
@@ -159,7 +165,7 @@ public sealed class CloudSync
         cos.PutObject(new PutObjectRequest(_s.Bucket, TeamTargetKey, Protect(json)));
     }
 
-    /// <summary>下载团队年度目标；云端尚不存在（首次）或读取失败 → 返回 null（调用方不覆盖本地）。</summary>
+    /// <summary>下载本团队年度目标（本团队前缀下的单一对象）。不存在/读取失败 → null（调用方不覆盖本地）。</summary>
     public TeamTargetBundle? DownloadTeamTargets()
     {
         try { return JsonSerializer.Deserialize<TeamTargetBundle>(Unprotect(GetBytes(TeamTargetKey)), JsonOpts); }
